@@ -63,7 +63,7 @@ resource "aws_iam_role_policy" "this" {
   role = aws_iam_role.this.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       {
         Effect   = "Allow"
         Action   = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"]
@@ -88,8 +88,50 @@ resource "aws_iam_role_policy" "this" {
         Resource  = "arn:aws:s3:::${var.scripts_bucket}"
         Condition = { StringLike = { "s3:prefix" = ["${var.scripts_prefix}/*", var.scripts_prefix] } }
       },
-    ]
+      ],
+      # Role credentials stolen off the box are useless elsewhere. The subnet CIDR covers calls
+      # through VPC endpoints (source = private IP). Skipped when egress_cidrs is empty.
+      length(var.egress_cidrs) == 0 ? [] : [{
+        Effect   = "Deny"
+        Action   = "*"
+        Resource = "*"
+        Condition = {
+          NotIpAddress = { "aws:SourceIp" = concat(var.egress_cidrs, [data.aws_subnet.this.cidr_block]) }
+          Bool         = { "aws:ViaAWSService" = "false" }
+        }
+      }],
+    )
   })
+}
+
+# Needs the `Project` cost allocation tag activated once (Billing -> Cost allocation tags).
+resource "aws_budgets_budget" "this" {
+  name         = "devbox-${var.name}"
+  budget_type  = "COST"
+  limit_amount = tostring(var.monthly_budget_usd)
+  limit_unit   = "USD"
+  time_unit    = "MONTHLY"
+
+  cost_filter {
+    name   = "TagKeyValue"
+    values = [format("user:Project$%s", var.name)]
+  }
+
+  notification {
+    comparison_operator        = "GREATER_THAN"
+    threshold                  = 80
+    threshold_type             = "PERCENTAGE"
+    notification_type          = "ACTUAL"
+    subscriber_email_addresses = [var.budget_email]
+  }
+
+  notification {
+    comparison_operator        = "GREATER_THAN"
+    threshold                  = 100
+    threshold_type             = "PERCENTAGE"
+    notification_type          = "FORECASTED"
+    subscriber_email_addresses = [var.budget_email]
+  }
 }
 
 resource "aws_iam_instance_profile" "this" {

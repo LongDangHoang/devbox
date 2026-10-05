@@ -28,6 +28,10 @@ module "devbox" {
   region         = var.region
   scripts_bucket = var.scripts_bucket
   scripts_prefix = var.scripts_prefix
+
+  egress_cidrs       = var.egress_cidrs
+  budget_email       = var.budget_email
+  monthly_budget_usd = var.monthly_budget_usd
 }
 
 module "github_project" {

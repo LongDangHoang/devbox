@@ -8,3 +8,6 @@ variable "subnet_id" { type = string }
 variable "region" { type = string }
 variable "scripts_bucket" { type = string }
 variable "scripts_prefix" { type = string }
+variable "egress_cidrs" { type = list(string) }
+variable "budget_email" { type = string }
+variable "monthly_budget_usd" { type = number }

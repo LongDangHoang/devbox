@@ -47,3 +47,19 @@ variable "github_reviewer_username" {
 variable "agent_github_username" {
   type = string
 }
+
+# Public egress IPs of the boxes (e.g. NAT gateway EIP as "x.x.x.x/32"). When set, the box role's
+# credentials only work from these IPs. Leave empty if boxes use changing public IPs.
+variable "egress_cidrs" {
+  type    = list(string)
+  default = []
+}
+
+variable "budget_email" {
+  type = string
+}
+
+variable "monthly_budget_usd" {
+  type    = number
+  default = 30
+}

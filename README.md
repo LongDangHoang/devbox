@@ -29,6 +29,8 @@ Manual, once:
 - **Branch protection:** the default branch requires a PR with 1 approval, and the latest push must be approved by someone other than its pusher. That someone is you; the agent can open PRs but never merge. Admins aren't enforced, so you can still merge your own PRs (e.g. `copier update`) directly.
 - **Modal:** create a dedicated workspace with a low spend limit. If you use W&B, store its key there (never in GitHub), with the Modal CLI logged in to that workspace: `modal secret create wandb WANDB_API_KEY=<key>`, and answer `use_wandb=true` in Copier.
 - **Anthropic Console** (only if project code calls the API): dedicated workspace with a spend limit; its key goes only into Environment secrets.
+- **AWS cost alerts:** each project gets an AWS Budget (`monthly_budget_usd`, emails `budget_email` at 80% actual / 100% forecast). Activate `Project` once under Billing → Cost allocation tags (it appears after the first tagged resource exists; data can lag ~24h).
+- **Role credential pinning (optional):** if the boxes egress through a fixed IP (NAT gateway EIP), set `egress_cidrs = ["<eip>/32"]` so the instance role's credentials are rejected anywhere else.
 - **claude.ai:** turn off or cap extra usage, and turn on trusted devices (the box's OAuth token is the one secret that reaches beyond the box: it can drive Remote Control on all your boxes).
 
 ## Onboarding a project
