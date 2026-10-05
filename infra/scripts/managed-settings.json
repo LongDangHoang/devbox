@@ -2,6 +2,7 @@
   "allowManagedHooksOnly": true,
   "allowManagedMcpServersOnly": true,
   "allowedMcpServers": [],
+  "env": { "DISABLE_AUTOUPDATER": "1" },
   "permissions": {
     "disableBypassPermissionsMode": "disable",
     "deny": [
@@ -15,7 +16,9 @@
       "Edit(~/.bash_profile)",
       "Edit(~/.gitconfig)",
       "Edit(~/.config/**)",
-      "Edit(~/.local/**)"
+      "Edit(~/.local/**)",
+      "Edit(//data/repo/.git/hooks/**)",
+      "Edit(//data/repo/.git/config)"
     ]
   },
   "sandbox": {

@@ -29,7 +29,7 @@ Manual, once:
 - **Branch protection:** the default branch requires a PR with 1 approval, and the latest push must be approved by someone other than its pusher. That someone is you; the agent can open PRs but never merge. Admins aren't enforced, so you can still merge your own PRs (e.g. `copier update`) directly.
 - **Modal:** create a dedicated workspace with a low spend limit. If you use W&B, store its key there (never in GitHub), with the Modal CLI logged in to that workspace: `modal secret create wandb WANDB_API_KEY=<key>`, and answer `use_wandb=true` in Copier.
 - **Anthropic Console** (only if project code calls the API): dedicated workspace with a spend limit; its key goes only into Environment secrets.
-- **claude.ai:** turn off or cap extra usage.
+- **claude.ai:** turn off or cap extra usage, and turn on trusted devices (the box's OAuth token is the one secret that reaches beyond the box: it can drive Remote Control on all your boxes).
 
 ## Onboarding a project
 
@@ -76,7 +76,7 @@ Must be the claude.ai login, not `setup-token`. After this, Remote Control comes
 
 `make start NAME=my-proj` (or a phone shortcut), work via the Claude app or `make ssh NAME=my-proj`; the box stops itself when idle. Also: `make stop|status NAME=...`, `make list`. To run on GPU: review the pushed commit's whole diff (including `pyproject.toml`/`uv.lock`), then trigger the project's `run-experiments` workflow with the SHA and configs.
 
-**Admin on the box:** `make ssh` lands as `ubuntu` (no sudo); `exit` drops you to `ssm-user`, which has sudo.
+**Admin on the box:** `make ssh` lands as `ubuntu` (no sudo); `exit` drops you to `ssm-user`, which has sudo. Never run repo code (`make check`, `uv run`, git hooks) as `ssm-user`: it would run agent-written code with sudo.
 
 **Sandbox and egress allowlist:** Claude Code's sandbox and network allowlist are enforced by the root-owned `/etc/claude-code/managed-settings.json` (from `infra/scripts/managed-settings.json`); the project's `.claude/settings.json` can't loosen them. To allow a domain: edit `infra/scripts/managed-settings.json`, `terraform -chdir=infra/terraform apply`, then reboot the box (`sudo reboot` as ssm-user, or `make stop` + `make start`).
 

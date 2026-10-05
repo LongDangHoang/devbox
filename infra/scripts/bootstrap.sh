@@ -95,9 +95,17 @@ if [[ -n ${P[github_token]:-} ]]; then
   as_u git config --global credential.helper "store --file /data/git-credentials"
 fi
 
-# --- 8. user tools (skipped if present; claude self-updates)
+# --- 8. tools. Claude Code is installed by root and copied root-owned to /usr/local/bin,
+# so nothing running as ubuntu can swap the binary claude-rc executes. Updated each boot
+# (the in-app autoupdater is off via managed settings).
 [[ -x $H/.local/bin/uv ]] || as_u bash -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'
-[[ -x $H/.local/bin/claude ]] || as_u bash -c 'curl -fsSL https://claude.ai/install.sh | bash'
+if [[ -x /root/.local/bin/claude ]]; then
+  /root/.local/bin/claude update || echo "claude update failed; keeping current version" >&2
+else
+  curl -fsSL https://claude.ai/install.sh | bash
+fi
+install -o root -g root -m 0755 "$(readlink -f /root/.local/bin/claude)" /usr/local/bin/claude
+rm -f "$H/.local/bin/claude" # older ubuntu-owned install would shadow it on PATH
 
 # --- 9. repo (no dependency install here: that would run agent-controlled code unsandboxed)
 if [[ ! -d /data/repo/.git && -n ${P[repo_url]:-} ]]; then
