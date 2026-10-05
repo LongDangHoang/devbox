@@ -3,12 +3,13 @@ REGION ?= ap-southeast-2
 export REGION
 TF := terraform -chdir=infra/terraform
 
-# Instance id for NAME by Project tag (terminated excluded); empty if none.
-INSTANCE_ID = $$(aws ec2 describe-instances --region $(REGION) \
-	--filters Name=tag:Project,Values=$(NAME) Name=instance-state-name,Values=pending,running,stopping,stopped \
-	--query 'Reservations[].Instances[].InstanceId' --output text)
+LIVE_STATES = Name=instance-state-name,Values=pending,running,stopping,stopped
 NEED_NAME = test -n "$(NAME)" || { echo "error: NAME=<project> is required" >&2; exit 1; }
-NEED_ID = [ -n "$$id" ] && [ "$$id" != None ] || { echo "error: no box found for project $(NAME)" >&2; exit 1; }
+# Sets $$id to NAME's box (by Project tag, terminated excluded) or fails.
+GET_ID = $(NEED_NAME); id=$$(aws ec2 describe-instances --region $(REGION) \
+	--filters Name=tag:Project,Values=$(NAME) $(LIVE_STATES) \
+	--query 'Reservations[].Instances[].InstanceId' --output text); \
+	[ -n "$$id" ] && [ "$$id" != None ] || { echo "error: no box found for project $(NAME)" >&2; exit 1; }
 SESSION = aws ssm start-session --region $(REGION) --target "$$id" \
 	--document-name AWS-StartInteractiveCommand --parameters '{"command":["sudo -iu ubuntu"]}'
 
@@ -36,13 +37,12 @@ secrets: ## NAME= - prompt for and set agent token (SSM) + Modal/W&B secrets (gh
 	@$(NEED_NAME); scripts/secrets.sh "$(NAME)"
 
 login: ## NAME= - start box, wait for SSM, open shell as ubuntu (then: claude auth login)
-	@$(NEED_NAME)
-	@set -euo pipefail; id=$(INSTANCE_ID); $(NEED_ID); \
+	@set -euo pipefail; $(GET_ID); \
 	echo "Starting $$id if stopped..."; \
 	aws ec2 start-instances --region $(REGION) --instance-ids "$$id" >/dev/null; \
 	aws ec2 wait instance-running --region $(REGION) --instance-ids "$$id"; \
 	echo "Waiting for SSM agent..."; \
-	for i in $$(seq 60); do \
+	for _ in $$(seq 60); do \
 	  s=$$(aws ssm describe-instance-information --region $(REGION) --filters Key=InstanceIds,Values="$$id" \
 	    --query 'InstanceInformationList[0].PingStatus' --output text); \
 	  [ "$$s" = Online ] && break; sleep 5; \
@@ -52,29 +52,25 @@ login: ## NAME= - start box, wait for SSM, open shell as ubuntu (then: claude au
 	$(SESSION)
 
 ssh: ## NAME= - SSM session to the box (no auto-start)
-	@$(NEED_NAME)
-	@set -euo pipefail; id=$(INSTANCE_ID); $(NEED_ID); $(SESSION)
+	@set -euo pipefail; $(GET_ID); $(SESSION)
 
 start: ## NAME= - start the box
-	@$(NEED_NAME)
-	@set -euo pipefail; id=$(INSTANCE_ID); $(NEED_ID); echo "Starting $$id"; \
+	@set -euo pipefail; $(GET_ID); echo "Starting $$id"; \
 	aws ec2 start-instances --region $(REGION) --instance-ids "$$id" --query 'StartingInstances[].CurrentState.Name' --output text
 
 stop: ## NAME= - stop the box
-	@$(NEED_NAME)
-	@set -euo pipefail; id=$(INSTANCE_ID); $(NEED_ID); echo "Stopping $$id"; \
+	@set -euo pipefail; $(GET_ID); echo "Stopping $$id"; \
 	aws ec2 stop-instances --region $(REGION) --instance-ids "$$id" --query 'StoppingInstances[].CurrentState.Name' --output text
 
 status: ## NAME= - show box state
-	@$(NEED_NAME)
-	@set -euo pipefail; id=$(INSTANCE_ID); $(NEED_ID); \
+	@set -euo pipefail; $(GET_ID); \
 	aws ec2 describe-instances --region $(REGION) --instance-ids "$$id" \
 	  --query 'Reservations[].Instances[].[InstanceId,InstanceType,State.Name]' --output text
 
 list: ## List projects with repo and box state
 	@set -euo pipefail; \
 	states=$$(aws ec2 describe-instances --region $(REGION) \
-	  --filters Name=tag-key,Values=Project Name=instance-state-name,Values=pending,running,stopping,stopped \
+	  --filters Name=tag-key,Values=Project $(LIVE_STATES) \
 	  --query 'Reservations[].Instances[].[Tags[?Key==`Project`]|[0].Value,State.Name]' --output text); \
 	printf '%-20s %-35s %s\n' NAME REPO STATE; \
 	for f in infra/projects/*.json; do \
@@ -87,7 +83,7 @@ retire: ## NAME= - destroy a project's box/data volume/GitHub settings (final sn
 	@$(NEED_NAME); scripts/retire.sh "$(NAME)"
 
 fmt: ## terraform fmt -recursive
-	terraform -chdir=infra/terraform fmt -recursive
+	$(TF) fmt -recursive
 
 validate: ## terraform init -backend=false && validate
 	$(TF) init -backend=false && $(TF) validate

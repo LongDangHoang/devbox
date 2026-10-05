@@ -1,8 +1,2 @@
-variable "repo" {
-  description = "Full name, owner/name"
-  type        = string
-}
-
-variable "reviewer_username" {
-  type = string
-}
+variable "repo" { type = string } # owner/name
+variable "reviewer_username" { type = string }

@@ -19,7 +19,7 @@ terraform -chdir=infra/terraform init -backend-config=backend.hcl
 export GITHUB_TOKEN=<admin-token>   # local only, never on a box
 ```
 
-(`terraform.tfvars` and `backend.hcl` are gitignored. Region defaults to `ap-southeast-2`; override with `REGION=...` for make, `AWS_REGION` for the AWS CLI.)
+`terraform.tfvars` and `backend.hcl` are gitignored. Region defaults to `ap-southeast-2`; if you change `region` in `terraform.tfvars`, also pass `REGION=...` to make (or export it).
 
 Manual, once:
 
@@ -70,14 +70,14 @@ sudo systemctl restart claude-rc
 
 Must be the claude.ai login, not `setup-token`. After this, Remote Control comes up on every boot and the session appears in the Claude app as `my-proj`.
 
-## Later
-
-- Template updates: `uvx copier update` in the project repo (review and commit the merge).
-- Workflow logic updates centrally via the reusable workflow at `@main`; no project change needed.
-
 ## Daily usage
 
 `make start NAME=my-proj` (or a phone shortcut), work via the Claude app or `make ssh NAME=my-proj`; the box stops itself when idle. Also: `make stop|status NAME=...`, `make list`. To run on GPU: review the pushed commit, then trigger the project's `run-experiments` workflow with the SHA and configs.
+
+## Updates
+
+- Template: `uvx copier update` in the project repo (review and commit the merge).
+- Workflow logic: changes centrally via the reusable workflow at `@main`; no project change needed.
 
 ## Retiring a project
 
@@ -89,7 +89,7 @@ Asks you to type the name, stops the box, removes the JSON, plans, aborts if the
 
 ## Dev
 
-`make fmt`, `make validate`.
+`make fmt`, `make validate`, `make help`.
 
 ## Manual acceptance checklist (needs a real AWS box)
 

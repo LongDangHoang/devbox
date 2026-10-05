@@ -7,7 +7,3 @@ output "projects" {
     }
   }
 }
-
-output "instance_ids" {
-  value = { for k, m in module.devbox : k => m.instance_id }
-}

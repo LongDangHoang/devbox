@@ -90,7 +90,7 @@ ln -sfn /data/claude.json "$H/.claude.json"
 chown -R "$U:$U" /data/claude /data/claude.json
 chown -h "$U:$U" "$H/.claude" "$H/.claude.json"
 
-# --- 5. git auth (credential store; token reachable by the dev user, see report)
+# --- 5. git auth (credential store; the token is readable by the dev user)
 if [[ -n ${P[github_token]:-} ]]; then
   ( umask 077; echo "https://x-access-token:${P[github_token]}@github.com" > /data/git-credentials )
   chown "$U:$U" /data/git-credentials
@@ -111,7 +111,7 @@ fi
 
 # --- 8. services
 for f in claude-rc.service idle-stop.service idle-stop.timer; do
-  install -m 0644 "$SRC/$f" /etc/systemd/system/$f
+  install -m 0644 "$SRC/$f" "/etc/systemd/system/$f"
 done
 systemctl daemon-reload
 systemctl enable idle-stop.timer claude-rc.service

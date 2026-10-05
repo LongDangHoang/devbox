@@ -1,11 +1,11 @@
 from pathlib import Path
-from typing import Literal
+from typing import Literal, get_args
 
 import yaml
 from pydantic import BaseModel
 
-GPUS = ("T4", "L4", "A10G", "A100", "H100")  # allowlist; smoke uses the first (smallest)
-Gpu = Literal["T4", "L4", "A10G", "A100", "H100"]
+Gpu = Literal["T4", "L4", "A10G", "A100", "H100"]  # allowlist; smoke uses the first (smallest)
+GPUS: tuple[str, ...] = get_args(Gpu)
 
 
 class Config(BaseModel, extra="forbid"):

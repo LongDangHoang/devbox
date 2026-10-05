@@ -41,7 +41,6 @@ resource "aws_security_group" "this" {
   tags = merge(local.tags, { Name = "devbox-${var.name}" })
 }
 
-# IAM
 resource "aws_iam_role" "this" {
   name = "devbox-${var.name}"
   assume_role_policy = jsonencode({
@@ -96,7 +95,6 @@ resource "aws_iam_instance_profile" "this" {
   role = aws_iam_role.this.name
 }
 
-# SSM params
 resource "aws_ssm_parameter" "github_token" {
   name  = "/devbox/${var.name}/github_token"
   type  = "SecureString"

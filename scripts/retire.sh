@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Retire a project: destroy only its resources, keep final EBS snapshot, keep GitHub repo.
 set -euo pipefail
 name=${1:?usage: retire.sh NAME}
@@ -23,7 +23,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# 2. stop box
+# Stop the box so the data volume detaches cleanly.
 id=$(aws ec2 describe-instances --region "$region" \
   --filters "Name=tag:Project,Values=$name" Name=instance-state-name,Values=pending,running,stopping,stopped \
   --query 'Reservations[].Instances[].InstanceId' --output text)
@@ -33,7 +33,7 @@ if [ -n "$id" ] && [ "$id" != None ]; then
   aws ec2 wait instance-stopped --region "$region" --instance-ids "$id"
 fi
 
-# 3. record volume id, remove JSON, plan, verify scope
+# Record the volume id, remove the JSON and plan; abort unless the plan only deletes this project's resources.
 volid=$($tf output -json projects | jq -r --arg n "$name" '.[$n].data_volume_id // empty')
 rm "$f"
 $tf plan -out="$plan"
@@ -52,7 +52,7 @@ read -r -p "Apply? [y/N] " ok
 $tf apply "$plan"
 applied=1
 
-# 4. final snapshot
+# Terraform leaves a final snapshot (final_snapshot=true); it can take a moment to appear.
 if [ -n "$volid" ]; then
   snap=
   for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -71,7 +71,6 @@ else
   echo "warning: data volume id not recorded; find snapshots manually" >&2
 fi
 
-# 5. commit
 git add -A -- "$f"
 git commit -m "Retire project $name" -- "$f"
 echo "Reminder: remove $name's repo from the agent fine-grained PAT's selected repositories."

@@ -7,7 +7,7 @@ data "github_repository" "this" {
   name = local.name
 }
 
-data "github_user" "me" {
+data "github_user" "reviewer" {
   username = var.reviewer_username
 }
 
@@ -16,10 +16,10 @@ resource "github_repository_environment" "modal" {
   environment = "modal"
 
   reviewers {
-    users = [data.github_user.me.id]
+    users = [data.github_user.reviewer.id]
   }
 
-  # protected default branch => only the default branch can deploy
+  # Only protected branches (i.e. the default branch) can deploy.
   deployment_branch_policy {
     protected_branches     = true
     custom_branch_policies = false

@@ -28,7 +28,7 @@ on:
       configs:
         type: string
         required: true
-        description: "Comma-separated file names under experiments/"
+        description: Comma-separated config paths relative to experiments/
       entrypoint:
         type: string
         default: src/app/modal_app.py

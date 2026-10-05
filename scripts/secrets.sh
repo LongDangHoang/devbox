@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Prompt (hidden) for secrets and store them. Values only ever flow through
 # stdin pipes (printf is a builtin: no argv, no disk, no Terraform state).
 set -euo pipefail
@@ -24,4 +24,3 @@ for s in MODAL_TOKEN_ID MODAL_TOKEN_SECRET WANDB_API_KEY; do
     printf '%s' "$val" | gh secret set "$s" --env modal --repo "$repo"
   fi
 done
-val=

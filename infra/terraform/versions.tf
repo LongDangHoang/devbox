@@ -1,7 +1,7 @@
 terraform {
   required_version = ">= 1.6"
 
-  # Partial config: terraform init -backend-config="bucket=..." -backend-config="key=devbox/terraform.tfstate" -backend-config="region=..."
+  # Partial config: terraform init -backend-config=backend.hcl (see README).
   backend "s3" {}
 
   required_providers {
@@ -20,7 +20,7 @@ provider "aws" {
   region = var.region
 }
 
-# Admin token comes from the GITHUB_TOKEN env var on the machine running terraform; never placed on a box.
+# Admin token comes from GITHUB_TOKEN on the machine running terraform; never placed on a box.
 provider "github" {
   owner = var.github_owner
 }
