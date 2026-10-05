@@ -1,0 +1,12 @@
+{
+  "sandbox": {
+    "enabled": true,
+    "filesystem": {
+      "denyRead": ["/etc/devbox/env"]
+    }
+  },
+  "permissions": {
+    "deny": ["Read(/etc/devbox/env)", "Read(/data/git-credentials)"]
+  },
+  "inputNeededNotifEnabled": true
+}

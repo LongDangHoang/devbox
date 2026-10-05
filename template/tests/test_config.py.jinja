@@ -1,0 +1,17 @@
+from pathlib import Path
+
+import pytest
+
+from {{ package_name }}.config import load
+
+CONFIGS = sorted(Path(__file__).parents[1].glob("experiments/*.yml"))
+
+
+@pytest.mark.parametrize("path", CONFIGS, ids=lambda p: p.name)
+def test_loads_and_smoke_shrinks(path):
+    cfg = load(path)
+    s = cfg.smoke()
+    assert s.width < cfg.width and s.steps < cfg.steps
+    assert not s.bf16 and not s.compile
+    assert s.smoke(keep_gpu_features=True).steps == s.steps
+    assert cfg.smoke(keep_gpu_features=True).bf16 == cfg.bf16

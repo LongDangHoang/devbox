@@ -1,0 +1,10 @@
+region                   = "ap-southeast-2"
+vpc_id                   = "vpc-xxxxxxxx"
+subnet_id                = "subnet-xxxxxxxx"
+scripts_bucket           = "my-devbox-bucket"
+scripts_prefix           = "devbox/scripts"
+default_instance_type    = "m7g.xlarge"
+default_data_gb          = 50
+idle_minutes             = 30
+github_owner             = "OWNER"
+github_reviewer_username = "USERNAME"

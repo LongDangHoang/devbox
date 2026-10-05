@@ -1,0 +1,45 @@
+"""Thin Modal wrapper. All logic lives in train.run()."""
+
+import os
+import sys
+from pathlib import Path
+
+import modal
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "src"))  # lets `modal run <path>` import the package without install
+
+from {{ package_name }}.config import GPUS, Config, load
+
+image = (
+    modal.Image.debian_slim(python_version="{{ python_version }}")
+    .uv_sync(str(ROOT), extra_options="--no-install-project")  # same uv.lock as the box
+    .add_local_python_source("{{ package_name }}")
+)
+app = modal.App("{{ project_name }}", image=image)
+# W&B key comes from the caller's `modal` GitHub Environment; absent locally.
+secrets = (
+    [modal.Secret.from_dict({"WANDB_API_KEY": os.environ["WANDB_API_KEY"]})]
+    if os.environ.get("WANDB_API_KEY")
+    else []
+)
+
+
+# real gpu/timeout set per config via with_options
+@app.function(gpu=GPUS[0], timeout=300, secrets=secrets)
+def train(cfg: dict, smoke: bool) -> dict:
+    from {{ package_name }}.train import run
+
+    return run(Config(**cfg), "cuda")
+
+
+@app.local_entrypoint()
+def main(config: str, smoke: bool = False):
+    cfg = load(config)
+    if smoke:
+        cfg = cfg.smoke(keep_gpu_features=True).model_copy(update={"gpu": GPUS[0]})
+        print(train.with_options(gpu=cfg.gpu, timeout=300).remote(cfg.model_dump(), True))
+        return
+    fn = train.with_options(gpu=cfg.gpu, timeout=cfg.timeout_s, max_containers=cfg.max_containers)
+    # spawn, not remote: with `modal run --detach` the call keeps running after we exit
+    print("spawned", fn.spawn(cfg.model_dump(), False).object_id)

@@ -1,0 +1,6 @@
+[Unit]
+Description=Stop the box when idle
+
+[Service]
+Type=oneshot
+ExecStart=/opt/devbox/scripts/idle-stop.sh

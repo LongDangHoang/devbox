@@ -1,0 +1,30 @@
+name: run-experiments
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Commit SHA to run
+        required: true
+        type: string
+      configs:
+        description: Comma-separated config paths relative to experiments/ (e.g. example.yml)
+        required: true
+        type: string
+      entrypoint:
+        description: Modal entrypoint
+        type: string
+        default: src/{{ package_name }}/modal_app.py
+      skip_smoke:
+        description: Skip the GPU smoke stage
+        type: boolean
+        default: false
+
+jobs:
+  run:
+    uses: {{ github_owner }}/{{ devbox_repo }}/.github/workflows/run-experiments.yml@main
+    with:
+      sha: {% raw %}${{ inputs.sha }}{% endraw %}
+      configs: {% raw %}${{ inputs.configs }}{% endraw %}
+      entrypoint: {% raw %}${{ inputs.entrypoint }}{% endraw %}
+      skip_smoke: {% raw %}${{ inputs.skip_smoke }}{% endraw %}
+    secrets: inherit

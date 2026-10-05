@@ -1,0 +1,98 @@
+# Reusable workflow: GPU smoke on Modal, then detached full runs.
+#
+# Caller usage (needs `secrets: inherit` so the caller's `modal` Environment
+# secrets MODAL_TOKEN_ID / MODAL_TOKEN_SECRET / WANDB_API_KEY are available):
+#
+#   jobs:
+#     run:
+#       uses: <owner>/devbox/.github/workflows/run-experiments.yml@main
+#       with: { sha: ..., configs: "a.yml,b.yml", entrypoint: src/<pkg>/modal_app.py }
+#       secrets: inherit
+#
+# Private devbox repo: Settings > Actions > General > Access on the devbox repo
+# must allow workflows from your other repos to use it.
+#
+# Design: ONE job with two phases (smoke steps, then run steps) instead of two
+# jobs. Required reviewers on an Environment are enforced per job that
+# references it, so two `environment: modal` jobs = two approvals. One job =
+# one approval; a failing smoke step still stops the run steps.
+# https://docs.github.com/en/actions/managing-workflow-runs-and-deployments/managing-deployments/managing-environments-for-deployment
+name: run-experiments
+
+on:
+  workflow_call:
+    inputs:
+      sha:
+        type: string
+        required: true
+      configs:
+        type: string
+        required: true
+        description: "Comma-separated file names under experiments/"
+      entrypoint:
+        type: string
+        default: src/app/modal_app.py
+      skip_smoke:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  experiments:
+    runs-on: ubuntu-latest
+    environment: modal
+    env:
+      # inputs go through env, never interpolated into run: scripts
+      IN_SHA: ${{ inputs.sha }}
+      IN_CONFIGS: ${{ inputs.configs }}
+      IN_ENTRYPOINT: ${{ inputs.entrypoint }}
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+    steps:
+      - name: Validate inputs
+        run: |
+          [[ "$IN_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "sha must be a full 40-char lowercase hex SHA"; exit 1; }
+          [[ "$IN_ENTRYPOINT" =~ ^[A-Za-z0-9_./-]+$ && "$IN_ENTRYPOINT" != /* && "$IN_ENTRYPOINT" != *..* ]] || { echo "bad entrypoint"; exit 1; }
+          [[ "$IN_CONFIGS" =~ ^[A-Za-z0-9_./,-]+$ && "$IN_CONFIGS" != *..* ]] || { echo "bad configs"; exit 1; }
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check out exact SHA
+        run: |
+          git checkout --detach "$IN_SHA"
+          [ "$(git rev-parse HEAD)" = "$IN_SHA" ] || { echo "HEAD != $IN_SHA"; exit 1; }
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Install modal client
+        run: uv tool install modal --with pydantic --with pyyaml  # modal_app loads the config locally
+
+      - name: "smoke: GPU smoke runs"
+        if: ${{ !inputs.skip_smoke }}
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+          IFS=',' read -ra CFGS <<< "$IN_CONFIGS"
+          for c in "${CFGS[@]}"; do
+            c="experiments/${c#experiments/}"
+            echo "::group::smoke $c"
+            timeout 5m modal run "$IN_ENTRYPOINT" --config "$c" --smoke
+            echo "::endgroup::"
+          done
+
+      - name: "run: launch detached runs"
+        run: |
+          set -euo pipefail
+          IFS=',' read -ra CFGS <<< "$IN_CONFIGS"
+          echo "### Modal runs @ ${IN_SHA}" >> "$GITHUB_STEP_SUMMARY"
+          for c in "${CFGS[@]}"; do
+            c="experiments/${c#experiments/}"
+            modal run --detach "$IN_ENTRYPOINT" --config "$c" 2>&1 | tee out.log
+            url=$(grep -o 'https://modal.com/[^ ]*' out.log | head -n1 || true)
+            echo "- ${c#experiments/}: ${url:-no URL found}" >> "$GITHUB_STEP_SUMMARY"
+          done

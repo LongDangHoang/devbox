@@ -1,0 +1,39 @@
+_subdirectory: template
+_answers_file: .copier-answers.yml
+_exclude:
+  - .git
+  - __pycache__
+  - "*.pyc"
+
+project_name:
+  type: str
+  help: Project slug (lowercase letters, digits, hyphens)
+  validator: >-
+    {% if not (project_name | regex_search('^[a-z0-9]+(-[a-z0-9]+)*$')) %}
+    Use lowercase letters, digits and hyphens only
+    {% endif %}
+
+package_name:
+  type: str
+  help: Python package name
+  default: "{{ project_name | replace('-', '_') }}"
+
+python_version:
+  type: str
+  default: "3.12"
+  help: Python version (3.12 max while macOS x86_64 torch 2.2.2 is supported)
+
+default_gpu:
+  type: str
+  help: Default GPU for the example config (must be in config.py allowlist)
+  choices: [T4, L4, A10G, A100, H100]
+  default: T4
+
+github_owner:
+  type: str
+  help: Your GitHub user/org that hosts the devbox repo
+
+devbox_repo:
+  type: str
+  default: devbox
+  help: Name of the devbox repo

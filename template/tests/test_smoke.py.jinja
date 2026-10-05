@@ -1,0 +1,9 @@
+from pathlib import Path
+
+from {{ package_name }}.config import load
+from {{ package_name }}.train import run
+
+
+def test_cpu_smoke():
+    cfg = load(Path(__file__).parents[1] / "experiments" / "example.yml").smoke()
+    assert run(cfg, "cpu")["eval_loss"] >= 0

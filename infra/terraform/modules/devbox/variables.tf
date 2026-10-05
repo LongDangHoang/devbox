@@ -1,0 +1,10 @@
+variable "name" { type = string }
+variable "repo" { type = string }
+variable "instance_type" { type = string }
+variable "data_gb" { type = number }
+variable "idle_minutes" { type = number }
+variable "vpc_id" { type = string }
+variable "subnet_id" { type = string }
+variable "region" { type = string }
+variable "scripts_bucket" { type = string }
+variable "scripts_prefix" { type = string }

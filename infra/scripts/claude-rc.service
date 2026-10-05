@@ -1,0 +1,18 @@
+[Unit]
+Description=Claude Code Remote Control server
+After=network-online.target setup-boot.service
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/data/repo
+# rc.env holds DEVBOX_PROJECT, PATH, cache dirs only (no secrets, no ANTHROPIC_* vars).
+EnvironmentFile=/etc/devbox/rc.env
+# `claude remote-control` needs a TTY (workspace-trust check); `script` provides a pty.
+# Needs one-time `claude auth login` and trust acceptance (run `claude` in /data/repo) on the box.
+ExecStart=/usr/bin/script -qefc "stty rows 50 cols 200; exec /home/ubuntu/.local/bin/claude remote-control --spawn worktree --name ${DEVBOX_PROJECT}" /dev/null
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
