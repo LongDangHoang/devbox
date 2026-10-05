@@ -5,13 +5,16 @@ TF := terraform -chdir=infra/terraform
 
 LIVE_STATES = Name=instance-state-name,Values=pending,running,stopping,stopped
 NEED_NAME = test -n "$(NAME)" || { echo "error: NAME=<project> is required" >&2; exit 1; }
-# Sets $$id to NAME's box (by Project tag, terminated excluded) or fails.
+# Sets $$id to NAME's box (by Project tag, terminated excluded) or fails (none or several).
 GET_ID = $(NEED_NAME); id=$$(aws ec2 describe-instances --region $(REGION) \
 	--filters Name=tag:Project,Values=$(NAME) $(LIVE_STATES) \
 	--query 'Reservations[].Instances[].InstanceId' --output text); \
-	[ -n "$$id" ] && [ "$$id" != None ] || { echo "error: no box found for project $(NAME)" >&2; exit 1; }
+	[ -n "$$id" ] && [ "$$id" != None ] || { echo "error: no box found for project $(NAME)" >&2; exit 1; }; \
+	case "$$id" in *[[:space:]]*) echo "error: multiple instances for Project=$(NAME): "$$id >&2; exit 1;; esac
+# Shell as ubuntu (no sudo); `exit` drops to ssm-user (has sudo) for admin. SSM runs this via sh -c.
 SESSION = aws ssm start-session --region $(REGION) --target "$$id" \
-	--document-name AWS-StartInteractiveCommand --parameters '{"command":["sudo -iu ubuntu"]}'
+	--document-name AWS-StartInteractiveCommand \
+	--parameters '{"command":["sudo -iu ubuntu; echo \"now ssm-user (sudo available); exit again to end\"; exec bash -l"]}'
 
 .DEFAULT_GOAL := help
 .PHONY: help new-project secrets login ssh start stop status list retire fmt validate
@@ -33,25 +36,26 @@ new-project: ## NAME= REPO=owner/name [TYPE=] [DATA_GB=] - add project, terrafor
 	  rm -f "$$f"; echo "apply failed or declined; removed $$f" >&2; exit 1; \
 	fi
 
-secrets: ## NAME= - prompt for and set agent token (SSM) + Modal/W&B secrets (gh)
+secrets: ## NAME= - prompt for and set agent token (SSM) + Modal token (gh env)
 	@$(NEED_NAME); scripts/secrets.sh "$(NAME)"
 
-login: ## NAME= - start box, wait for SSM, open shell as ubuntu (then: claude auth login)
+login: ## NAME= - start box, wait for SSM, open shell as ubuntu (then: claude auth login; exit -> ssm-user)
 	@set -euo pipefail; $(GET_ID); \
 	echo "Starting $$id if stopped..."; \
 	aws ec2 start-instances --region $(REGION) --instance-ids "$$id" >/dev/null; \
 	aws ec2 wait instance-running --region $(REGION) --instance-ids "$$id"; \
 	echo "Waiting for SSM agent..."; \
-	for _ in $$(seq 60); do \
+	s=; for _ in $$(seq 60); do \
 	  s=$$(aws ssm describe-instance-information --region $(REGION) --filters Key=InstanceIds,Values="$$id" \
-	    --query 'InstanceInformationList[0].PingStatus' --output text); \
+	    --query 'InstanceInformationList[0].PingStatus' --output text) \
+	    || { echo "warning: describe-instance-information failed (see above); retrying" >&2; s=; }; \
 	  [ "$$s" = Online ] && break; sleep 5; \
 	done; \
-	[ "$$s" = Online ] || { echo "error: SSM not online" >&2; exit 1; }; \
+	[ "$$s" = Online ] || { echo "error: SSM agent on $$id not online after 5 min (last status: $${s:-unknown})" >&2; exit 1; }; \
 	echo "In the session run: claude auth login   (claude.ai login, NOT setup-token)"; \
 	$(SESSION)
 
-ssh: ## NAME= - SSM session to the box (no auto-start)
+ssh: ## NAME= - SSM session as ubuntu, exit -> ssm-user (no auto-start)
 	@set -euo pipefail; $(GET_ID); $(SESSION)
 
 start: ## NAME= - start the box

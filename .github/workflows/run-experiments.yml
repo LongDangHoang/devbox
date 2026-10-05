@@ -1,7 +1,8 @@
 # Reusable workflow: GPU smoke on Modal, then detached full runs.
 #
 # Caller usage (needs `secrets: inherit` so the caller's `modal` Environment
-# secrets MODAL_TOKEN_ID / MODAL_TOKEN_SECRET / WANDB_API_KEY are available):
+# secrets MODAL_TOKEN_ID / MODAL_TOKEN_SECRET are available; W&B is a Modal-side
+# secret and never passes through GitHub):
 #
 #   jobs:
 #     run:
@@ -17,6 +18,13 @@
 # references it, so two `environment: modal` jobs = two approvals. One job =
 # one approval; a failing smoke step still stops the run steps.
 # https://docs.github.com/en/actions/managing-workflow-runs-and-deployments/managing-deployments/managing-environments-for-deployment
+#
+# The checked-out code is agent-written. Hardening: the Modal client is installed
+# before checkout with --no-config (repo uv.toml/pyproject can't redirect the
+# index), no uv cache, no persisted git token, and the Modal token is only in the
+# env of the two `modal run` steps. `modal run` imports the entrypoint, so the
+# reviewed code still runs with the Modal token: review the whole diff.
+# (step-security/harden-runner egress blocking needs a paid plan for private repos.)
 name: run-experiments
 
 on:
@@ -48,9 +56,6 @@ jobs:
       IN_SHA: ${{ inputs.sha }}
       IN_CONFIGS: ${{ inputs.configs }}
       IN_ENTRYPOINT: ${{ inputs.entrypoint }}
-      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-      WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
     steps:
       - name: Validate inputs
         run: |
@@ -58,23 +63,28 @@ jobs:
           [[ "$IN_ENTRYPOINT" =~ ^[A-Za-z0-9_./-]+$ && "$IN_ENTRYPOINT" != /* && "$IN_ENTRYPOINT" != *..* ]] || { echo "bad entrypoint"; exit 1; }
           [[ "$IN_CONFIGS" =~ ^[A-Za-z0-9_./,-]+$ && "$IN_CONFIGS" != *..* ]] || { echo "bad configs"; exit 1; }
 
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Check out exact SHA
-        run: |
-          git checkout --detach "$IN_SHA"
-          [ "$(git rev-parse HEAD)" = "$IN_SHA" ] || { echo "HEAD != $IN_SHA"; exit 1; }
-
       - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: false
 
       - name: Install modal client
-        run: uv tool install modal --with pydantic --with pyyaml  # modal_app loads the config locally
+        # before checkout + --no-config: repo files can't influence the install
+        run: uv tool install --no-config modal --with pydantic --with pyyaml  # modal_app loads the config locally
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+          persist-credentials: false
+
+      - name: Verify exact SHA
+        run: '[ "$(git rev-parse HEAD)" = "$IN_SHA" ] || { echo "HEAD != $IN_SHA"; exit 1; }'
 
       - name: "smoke: GPU smoke runs"
         if: ${{ !inputs.skip_smoke }}
         timeout-minutes: 30
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
           set -euo pipefail
           IFS=',' read -ra CFGS <<< "$IN_CONFIGS"
@@ -86,6 +96,9 @@ jobs:
           done
 
       - name: "run: launch detached runs"
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
           set -euo pipefail
           IFS=',' read -ra CFGS <<< "$IN_CONFIGS"

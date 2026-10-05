@@ -5,7 +5,7 @@ set -euo pipefail
 N=$(sed -n 's/^IDLE_MINUTES=//p' /etc/devbox/env 2>/dev/null | tail -n1)
 N=${N:-30}
 [[ $N =~ ^[0-9]+$ ]] || N=30
-LOAD_MAX=${IDLE_LOAD:-0.5}
+LOAD_MAX=0.5
 
 stay() { echo "idle-stop: staying up: $1"; exit 0; }
 

@@ -2,17 +2,19 @@ from pathlib import Path
 from typing import Literal, get_args
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-Gpu = Literal["T4", "L4", "A10G", "A100", "H100"]  # allowlist; smoke uses the first (smallest)
+# Allowlist; smoke uses the first (smallest). These bounds are guardrails, not a security
+# control: the agent can edit this file. The Modal workspace spend limit is the backstop.
+Gpu = Literal["T4", "L4", "A10G", "A100", "H100"]
 GPUS: tuple[str, ...] = get_args(Gpu)
 
 
 class Config(BaseModel, extra="forbid"):
     name: str
     gpu: Gpu = "T4"
-    timeout_s: int = 3600
-    max_containers: int = 1
+    timeout_s: int = Field(3600, ge=60, le=4 * 3600)
+    max_containers: int = Field(1, ge=1, le=4)
     width: int = 256
     depth: int = 4
     steps: int = 200

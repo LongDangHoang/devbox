@@ -37,3 +37,8 @@ devbox_repo:
   type: str
   default: devbox
   help: Name of the devbox repo
+
+use_wandb:
+  type: bool
+  default: false
+  help: Attach the Modal secret `wandb` (create it with `modal secret create wandb WANDB_API_KEY=...`)

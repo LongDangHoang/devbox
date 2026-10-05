@@ -10,7 +10,7 @@ f=infra/projects/$name.json
 repo=$(jq -r .repo "$f")
 
 echo "Empty input skips a secret. Input is hidden."
-read -rs -p "Agent GitHub token (-> SSM /devbox/$name/github_token): " val; echo
+read -rs -p "Agent machine-user token (-> SSM /devbox/$name/github_token): " val; echo
 if [ -n "$val" ]; then
   printf '%s' "$val" \
     | jq -Rs --arg n "/devbox/$name/github_token" '{Name:$n, Value:., Type:"SecureString", Overwrite:true}' \
@@ -18,9 +18,12 @@ if [ -n "$val" ]; then
   echo "  set SSM /devbox/$name/github_token"
 fi
 
-for s in MODAL_TOKEN_ID MODAL_TOKEN_SECRET WANDB_API_KEY; do
+for s in MODAL_TOKEN_ID MODAL_TOKEN_SECRET; do
   read -rs -p "$s (-> $repo env modal): " val; echo
   if [ -n "$val" ]; then
     printf '%s' "$val" | gh secret set "$s" --env modal --repo "$repo"
   fi
 done
+
+echo "W&B (if used): the key is a Modal secret, never a GitHub one. Locally, with the Modal CLI"
+echo "pointed at the dedicated workspace, run once:  modal secret create wandb WANDB_API_KEY=<key>"

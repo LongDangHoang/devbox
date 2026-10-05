@@ -1,0 +1,52 @@
+{
+  "allowManagedHooksOnly": true,
+  "allowManagedMcpServersOnly": true,
+  "allowedMcpServers": [],
+  "permissions": {
+    "disableBypassPermissionsMode": "disable",
+    "deny": [
+      "Read(//etc/devbox/env)",
+      "Read(//data/claude/.credentials.json)",
+      "Read(~/.claude/.credentials.json)",
+      "Edit(//data/claude/settings.json)",
+      "Edit(~/.claude/settings.json)",
+      "Edit(~/.bashrc)",
+      "Edit(~/.profile)",
+      "Edit(~/.bash_profile)",
+      "Edit(~/.gitconfig)",
+      "Edit(~/.config/**)",
+      "Edit(~/.local/**)"
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "allowUnsandboxedCommands": false,
+    "enableWeakerNestedSandbox": false,
+    "enableWeakerNetworkIsolation": false,
+    "filesystem": {
+      "allowManagedReadPathsOnly": true,
+      "allowWrite": ["/data/cache"],
+      "denyRead": [
+        "/etc/devbox/env",
+        "/data/claude/.credentials.json",
+        "~/.claude/.credentials.json"
+      ]
+    },
+    "network": {
+      "allowManagedDomainsOnly": true,
+      "allowAllUnixSockets": false,
+      "allowedDomains": [
+        "github.com",
+        "*.github.com",
+        "*.githubusercontent.com",
+        "pypi.org",
+        "files.pythonhosted.org",
+        "download.pytorch.org",
+        "astral.sh",
+        "*.astral.sh"
+      ],
+      "deniedDomains": ["169.254.169.254"]
+    }
+  }
+}

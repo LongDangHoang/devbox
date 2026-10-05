@@ -1,42 +1,47 @@
 #!/usr/bin/env bash
 # Idempotent boot setup; runs as root from setup-boot.service on every boot.
+# The agent (ubuntu) is untrusted: root never writes into ubuntu-owned paths (/data, $H);
+# those writes go through as_u. No ubuntu-controlled code runs outside the Claude sandbox here.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 U=ubuntu
 H=/home/$U
 SRC=$(dirname "$(readlink -f "$0")")
-as_u() { sudo -u "$U" -H "$@"; }
+as_u() { runuser -u "$U" -- env HOME="$H" "$@"; }
+umask 022
 
 # shellcheck disable=SC1091
 . /etc/devbox/boot.conf
 export AWS_DEFAULT_REGION=$AWS_REGION
 
-# --- 1. data volume -> /data
-dev=$(blkid -L devbox-data || true)
-if [[ -z $dev ]]; then
-  for _ in $(seq 24); do   # wait up to ~2 min for the attach
-    # non-root whole disk with no partitions/children and no mountpoint
-    for d in $(lsblk -dpno NAME,TYPE | awk '$1 ~ /nvme|xvd|sd/ && $2=="disk"{print $1}'); do
-      [[ $(lsblk -nr "$d" | wc -l) -eq 1 ]] && ! findmnt -rn -S "$d" >/dev/null && dev=$d && break
-    done
-    [[ -n $dev ]] && break
-    sleep 5
-  done
-  [[ -n $dev ]] || { echo "data volume not found" >&2; exit 1; }
-  # format only if no filesystem
-  blkid "$dev" >/dev/null || mkfs.ext4 -L devbox-data "$dev"
-  e2label "$dev" devbox-data
-fi
-mkdir -p /data
-grep -q 'LABEL=devbox-data' /etc/fstab || echo 'LABEL=devbox-data /data ext4 defaults,nofail 0 2' >> /etc/fstab
-mountpoint -q /data || mount /data
-chown "$U:$U" /data
-mkdir -p /data/cache /data/claude
-chown "$U:$U" /data/cache /data/claude
+# --- 1. lock down ubuntu: IMDS root-only, no sudo/lxd/adm (human uses ssm-user + sudo)
+iptables -C OUTPUT -d 169.254.169.254 -m owner ! --uid-owner 0 -j REJECT 2>/dev/null ||
+  iptables -I OUTPUT -d 169.254.169.254 -m owner ! --uid-owner 0 -j REJECT
+rm -f /etc/sudoers.d/90-cloud-init-users
+for g in sudo lxd adm; do gpasswd -d "$U" "$g" >/dev/null 2>&1 || true; done
 
-# --- 2. packages (bwrap+socat: Claude Code sandbox; Node for project tooling)
+# --- 2. params from SSM (root only; never written to disk except where noted)
+NAME=$(TOKEN=$(curl -fsS -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token) &&
+  curl -fsS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/tags/instance/Project)
+declare -A P
+while IFS=$'\t' read -r k v; do P[${k##*/}]=$v; done < <(
+  aws ssm get-parameters-by-path --path "/devbox/$NAME/" --with-decryption \
+    --query 'Parameters[].[Name,Value]' --output text)
+
+# --- 3. data volume -> /data: exactly our EBS volume, found by its NVMe serial
+vol=${P[data_volume_id]:?missing /devbox/$NAME/data_volume_id}
+dev=/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_${vol//-/}
+for _ in $(seq 24); do [[ -b $dev ]] && break; sleep 5; done   # wait up to ~2 min for the attach
+[[ -b $dev ]] || { echo "data volume $vol not attached" >&2; exit 1; }
+blkid "$dev" >/dev/null || mkfs.ext4 -L devbox-data "$dev"   # format only if no filesystem
+mkdir -p /data
+mountpoint -q /data || mount "$dev" /data
+chown "$U:$U" /data   # fs root of our volume; everything below is created by ubuntu
+as_u mkdir -p /data/cache /data/claude
+
+# --- 4. packages (bwrap+socat: Claude Code sandbox; Node for project tooling)
 apt-get update -qq
-apt-get install -y -qq git curl ca-certificates build-essential python3 nodejs bubblewrap socat
+apt-get install -y -qq git curl ca-certificates build-essential python3 nodejs bubblewrap socat iptables
 
 # Ubuntu 24.04 blocks bwrap userns by default; allow it (per sandboxing docs).
 if [[ $(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0) == 1 && ! -f /etc/apparmor.d/bwrap ]]; then
@@ -51,69 +56,60 @@ EOP
   systemctl reload apparmor || true
 fi
 
-# --- 3. secrets: SSM -> /etc/devbox/env (0600 root), rc.env (public bits only)
-NAME=$(TOKEN=$(curl -fsS -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token) &&
-  curl -fsS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/tags/instance/Project)
-declare -A P
-while IFS=$'\t' read -r k v; do P[${k##*/}]=$v; done < <(
-  aws ssm get-parameters-by-path --path "/devbox/$NAME/" --with-decryption \
-    --query 'Parameters[].[Name,Value]' --output text)
-umask 077
+# Org-level Claude Code policy (sandbox, network allowlist, credential deny-reads). Root-owned.
+install -D -o root -g root -m 0644 "$SRC/managed-settings.json" /etc/claude-code/managed-settings.json
+
+# --- 5. config files (no secrets): env for idle-stop, rc.env for claude-rc
 cat > /etc/devbox/env <<EOV
 DEVBOX_PROJECT=$NAME
-REPO_URL=${P[repo_url]:-}
 IDLE_MINUTES=${P[idle_minutes]:-30}
-GITHUB_TOKEN=${P[github_token]:-}
 EOV
-chown root:root /etc/devbox/env; chmod 0600 /etc/devbox/env
-umask 022
 cat > /etc/devbox/rc.env <<EOV
 DEVBOX_PROJECT=$NAME
 PATH=$H/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 XDG_CACHE_HOME=/data/cache
 UV_CACHE_DIR=/data/cache/uv
+UV_PYTHON_INSTALL_DIR=/data/cache/uv-python
 EOV
 cat > /etc/profile.d/devbox.sh <<'EOV'
 export XDG_CACHE_HOME=/data/cache
 export UV_CACHE_DIR=/data/cache/uv
+export UV_PYTHON_INSTALL_DIR=/data/cache/uv-python
 export PATH="$HOME/.local/bin:$PATH"
 EOV
 
-# --- 4. ~/.claude and ~/.claude.json live on /data
-if [[ -d $H/.claude && ! -L $H/.claude ]]; then
-  cp -an "$H/.claude/." /data/claude/ && rm -rf "$H/.claude"
-fi
-[[ -e /data/claude.json || ! -f $H/.claude.json || -L $H/.claude.json ]] || mv "$H/.claude.json" /data/claude.json
-[[ -e /data/claude.json ]] || echo '{}' > /data/claude.json
-ln -sfn /data/claude "$H/.claude"
-ln -sfn /data/claude.json "$H/.claude.json"
-chown -R "$U:$U" /data/claude /data/claude.json
-chown -h "$U:$U" "$H/.claude" "$H/.claude.json"
+# --- 6. ~/.claude and ~/.claude.json live on /data (all as ubuntu)
+as_u bash -euc '
+  if [[ -d ~/.claude && ! -L ~/.claude ]]; then cp -an ~/.claude/. /data/claude/ && rm -rf ~/.claude; fi
+  [[ -e /data/claude.json || ! -f ~/.claude.json || -L ~/.claude.json ]] || mv ~/.claude.json /data/claude.json
+  [[ -e /data/claude.json ]] || echo "{}" > /data/claude.json
+  ln -sfn /data/claude ~/.claude
+  ln -sfn /data/claude.json ~/.claude.json
+'
 
-# --- 5. git auth (credential store; the token is readable by the dev user)
+# --- 7. git auth: the agent's own scoped token, readable by ubuntu (git push needs it).
+# Token goes via stdin, not argv.
 if [[ -n ${P[github_token]:-} ]]; then
-  ( umask 077; echo "https://x-access-token:${P[github_token]}@github.com" > /data/git-credentials )
-  chown "$U:$U" /data/git-credentials
+  printf 'https://x-access-token:%s@github.com\n' "${P[github_token]}" |
+    as_u bash -euc 'umask 077; rm -f /data/git-credentials; cat > /data/git-credentials'
   as_u git config --global credential.helper "store --file /data/git-credentials"
 fi
 
-# --- 6. user tools (skipped if present; claude self-updates)
+# --- 8. user tools (skipped if present; claude self-updates)
 [[ -x $H/.local/bin/uv ]] || as_u bash -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'
 [[ -x $H/.local/bin/claude ]] || as_u bash -c 'curl -fsSL https://claude.ai/install.sh | bash'
 
-# --- 7. repo
+# --- 9. repo (no dependency install here: that would run agent-controlled code unsandboxed)
 if [[ ! -d /data/repo/.git && -n ${P[repo_url]:-} ]]; then
-  as_u git clone "${P[repo_url]}" /data/repo || echo "clone failed (token set yet?)" >&2
-fi
-if [[ -f /data/repo/pyproject.toml ]]; then
-  as_u bash -c 'cd /data/repo && UV_CACHE_DIR=/data/cache/uv ~/.local/bin/uv sync' || echo "uv sync failed" >&2
+  as_u git clone "${P[repo_url]}" /data/repo || echo "clone failed (token set / invite accepted?)" >&2
 fi
 
-# --- 8. services
+# --- 10. services
 for f in claude-rc.service idle-stop.service idle-stop.timer; do
   install -m 0644 "$SRC/$f" "/etc/systemd/system/$f"
 done
 systemctl daemon-reload
 systemctl enable idle-stop.timer claude-rc.service
-systemctl restart claude-rc.service
+# --no-block: claude-rc is ordered after this (still running) unit; a blocking restart would deadlock.
+systemctl restart --no-block claude-rc.service
 systemctl start idle-stop.timer

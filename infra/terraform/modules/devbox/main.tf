@@ -69,11 +69,13 @@ resource "aws_iam_role_policy" "this" {
         Action   = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"]
         Resource = [local.param_arn, "${local.param_arn}/*"]
       },
+      # AmazonSSMManagedInstanceCore allows ssm:GetParameter(s) on "*"; this caps reads at our own path.
+      # SecureString decrypt needs no IAM grant: the AWS-managed aws/ssm key policy already allows
+      # kms:Decrypt for account principals via SSM.
       {
-        Effect    = "Allow"
-        Action    = "kms:Decrypt"
-        Resource  = "arn:aws:kms:${var.region}:${data.aws_caller_identity.current.account_id}:alias/aws/ssm"
-        Condition = { StringEquals = { "kms:ViaService" = "ssm.${var.region}.amazonaws.com" } }
+        Effect      = "Deny"
+        Action      = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"]
+        NotResource = [local.param_arn, "${local.param_arn}/*"]
       },
       {
         Effect   = "Allow"
@@ -95,20 +97,26 @@ resource "aws_iam_instance_profile" "this" {
   role = aws_iam_role.this.name
 }
 
+# Write-only: the value never enters state, and later applies don't diff it, so
+# `make secrets` (put-parameter --overwrite) sticks. Bumping value_wo_version resets it to CHANGE_ME.
 resource "aws_ssm_parameter" "github_token" {
-  name  = "/devbox/${var.name}/github_token"
-  type  = "SecureString"
-  value = "CHANGE_ME"
-
-  lifecycle {
-    ignore_changes = [value]
-  }
+  name             = "/devbox/${var.name}/github_token"
+  type             = "SecureString"
+  value_wo         = "CHANGE_ME"
+  value_wo_version = 1
 }
 
 resource "aws_ssm_parameter" "repo_url" {
   name  = "/devbox/${var.name}/repo_url"
   type  = "String"
   value = "https://github.com/${var.repo}.git"
+}
+
+# Bootstrap mounts exactly this volume (by NVMe serial), never "some unformatted disk".
+resource "aws_ssm_parameter" "data_volume_id" {
+  name  = "/devbox/${var.name}/data_volume_id"
+  type  = "String"
+  value = aws_ebs_volume.data.id
 }
 
 resource "aws_ssm_parameter" "idle_minutes" {
@@ -168,6 +176,13 @@ resource "aws_launch_template" "this" {
     resource_type = "volume"
     tags          = merge(local.tags, { Name = "devbox-${var.name}-root" })
   }
+
+  # A new Ubuntu AMI must not create a new LT version for every project on each apply.
+  # To roll a box onto a new AMI: terraform apply -replace=module.devbox["<name>"].aws_launch_template.this
+  # (then replace the instance as well; the data volume survives).
+  lifecycle {
+    ignore_changes = [image_id]
+  }
 }
 
 resource "aws_instance" "this" {
@@ -176,6 +191,12 @@ resource "aws_instance" "this" {
   launch_template {
     id      = aws_launch_template.this.id
     version = aws_launch_template.this.latest_version
+  }
+
+  # LT version bumps (instance type, SG, ...) would otherwise replace the box. Apply such
+  # changes deliberately with: terraform apply -replace=module.devbox["<name>"].aws_instance.this
+  lifecycle {
+    ignore_changes = [launch_template]
   }
 }
 

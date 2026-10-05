@@ -8,3 +8,4 @@ default_data_gb          = 50
 idle_minutes             = 30
 github_owner             = "OWNER"
 github_reviewer_username = "USERNAME"
+agent_github_username    = "MACHINE_USER"

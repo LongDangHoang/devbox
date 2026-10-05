@@ -10,7 +10,7 @@ plan=retire.tfplan # relative to infra/terraform
 die() { echo "error: $*" >&2; exit 1; }
 [ -f "$f" ] || die "$f not found"
 
-echo "This will DESTROY the box, data volume and GitHub modal environment + branch protection for '$name'."
+echo "This will DESTROY the box, data volume and GitHub modal environment, branch protection + agent collaborator access for '$name'."
 echo "The GitHub repo itself is not touched; a final data-volume snapshot is kept."
 read -r -p "Type the project name to confirm: " ans
 [ "$ans" = "$name" ] || die "confirmation mismatch"
@@ -27,6 +27,7 @@ trap cleanup EXIT
 id=$(aws ec2 describe-instances --region "$region" \
   --filters "Name=tag:Project,Values=$name" Name=instance-state-name,Values=pending,running,stopping,stopped \
   --query 'Reservations[].Instances[].InstanceId' --output text)
+case "$id" in *[[:space:]]*) die "multiple instances for Project=$name: $(tr -s "[:space:]" " " <<<"$id")";; esac
 if [ -n "$id" ] && [ "$id" != None ]; then
   echo "Stopping $id..."
   aws ec2 stop-instances --region "$region" --instance-ids "$id" >/dev/null || true
@@ -73,4 +74,4 @@ fi
 
 git add -A -- "$f"
 git commit -m "Retire project $name" -- "$f"
-echo "Reminder: remove $name's repo from the agent fine-grained PAT's selected repositories."
+echo "Reminder: revoke the agent machine-user token you stored for $name (machine user -> Settings -> Developer settings -> Tokens (classic))."

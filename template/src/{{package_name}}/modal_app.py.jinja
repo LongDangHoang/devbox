@@ -1,6 +1,5 @@
 """Thin Modal wrapper. All logic lives in train.run()."""
 
-import os
 import sys
 from pathlib import Path
 
@@ -17,13 +16,11 @@ image = (
     .add_local_python_source("{{ package_name }}")
 )
 app = modal.App("{{ project_name }}", image=image)
-# W&B key comes from the caller's `modal` GitHub Environment; absent locally.
-secrets = (
-    [modal.Secret.from_dict({"WANDB_API_KEY": os.environ["WANDB_API_KEY"]})]
-    if os.environ.get("WANDB_API_KEY")
-    else []
-)
-
+{% if use_wandb %}# WANDB_API_KEY lives in a Modal-side secret, never in GitHub. Create it once, in the
+# dedicated Modal workspace: modal secret create wandb WANDB_API_KEY=<key>
+secrets = [modal.Secret.from_name("wandb")]
+{% else %}secrets: list[modal.Secret] = []
+{% endif %}
 
 # Real gpu/timeout are set per config via with_options.
 @app.function(gpu=GPUS[0], timeout=300, secrets=secrets)

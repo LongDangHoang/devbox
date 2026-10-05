@@ -1,5 +1,5 @@
 terraform {
-  required_version = ">= 1.6"
+  required_version = ">= 1.11" # write-only attributes (value_wo)
 
   # Partial config: terraform init -backend-config=backend.hcl (see README).
   backend "s3" {}
