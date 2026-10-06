@@ -140,7 +140,7 @@ resource "aws_iam_instance_profile" "this" {
 }
 
 # Write-only: the value never enters state, and later applies don't diff it, so
-# `make secrets` (put-parameter --overwrite) sticks. Bumping value_wo_version resets it to CHANGE_ME.
+# `devbox secrets` (put-parameter --overwrite) sticks. Bumping value_wo_version resets it to CHANGE_ME.
 resource "aws_ssm_parameter" "github_token" {
   name             = "/devbox/${var.name}/github_token"
   type             = "SecureString"

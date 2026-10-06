@@ -43,7 +43,7 @@ variable "github_reviewer_username" {
   type = string
 }
 
-# Machine-user account the boxes push as (its token goes in SSM via `make secrets`).
+# Machine-user account the boxes push as (its token goes in SSM via `devbox secrets`).
 variable "agent_github_username" {
   type = string
 }

@@ -2,11 +2,17 @@
 
 One EC2 dev box per ML project (Claude Code in Remote Control mode), GitHub repo settings via Terraform, a Copier project template, and a reusable `run-experiments` workflow that launches Modal GPU jobs only when you approve.
 
-Projects are one JSON file each in `infra/projects/<name>.json` (`{"repo": "<owner>/<name>", "instance_type": "...", "data_gb": 50}`; the last two optional). The Makefile wraps adding and retiring them.
+Projects are one JSON file each in `infra/projects/<name>.json` (`{"repo": "<owner>/<name>", "instance_type": "...", "data_gb": 50}`; the last two optional). The `devbox` CLI wraps adding and retiring them.
 
 ## One-time devbox setup
 
-Prereqs: `terraform` >= 1.11 (write-only arguments), `aws` CLI + [session-manager-plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html), `gh` (logged in), `jq`, `uv`. GNU make 3.81 / bash 3.2 are fine.
+Prereqs: `terraform` >= 1.11 (write-only arguments), `aws` CLI + [session-manager-plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html), `gh` (logged in), `uv`.
+
+Install the CLI once from this repo (editable, so it finds `infra/`):
+
+```bash
+uv tool install -e .   # puts `devbox` on PATH; `devbox --help` lists commands
+```
 
 ```bash
 cp infra/terraform/terraform.tfvars.example infra/terraform/terraform.tfvars   # region, VPC/subnet, bucket, GitHub owner, agent_github_username...
@@ -19,7 +25,7 @@ terraform -chdir=infra/terraform init -backend-config=backend.hcl
 export GITHUB_TOKEN=<admin-token>   # local only, never on a box
 ```
 
-`terraform.tfvars` and `backend.hcl` are gitignored. Region defaults to `ap-southeast-2`; if you change `region` in `terraform.tfvars`, also pass `REGION=...` to make (or export it).
+`terraform.tfvars` and `backend.hcl` are gitignored. Region defaults to `ap-southeast-2`; `devbox` reads `region` from `terraform.tfvars` (override with `devbox --region ...`).
 
 Manual, once:
 
@@ -51,17 +57,19 @@ git add -A && git commit -m "Add devbox template" && git push
 **2. In the `devbox` repo:**
 
 ```bash
-make new-project NAME=my-proj REPO=<owner>/my-proj   # optional: TYPE=m7g.xlarge DATA_GB=50
-make secrets NAME=my-proj   # agent token -> SSM, Modal token -> repo's `modal` Environment
+devbox add my-proj <owner>/my-proj   # optional: --type m7g.xlarge --data-gb 50
+devbox secrets my-proj   # agent token -> SSM, Modal token -> repo's `modal` Environment
 ```
 
-**3. Manual, once per project, as the machine user:** accept the invite (`https://github.com/<owner>/my-proj/invitations`), then create a **classic** token (Settings -> Developer settings -> Tokens (classic)) with only the `repo` scope, with an expiry. Paste it at the "Agent machine-user token" prompt of `make secrets`.
+`devbox add` and `devbox retire` both plan first and abort if the plan touches anything beyond that project's creates/deletes (shared script uploads to S3 are allowed), then ask y/N before applying.
+
+**3. Manual, once per project, as the machine user:** accept the invite (`https://github.com/<owner>/my-proj/invitations`), then create a **classic** token (Settings -> Developer settings -> Tokens (classic)) with only the `repo` scope, with an expiry. Paste it at the "Agent machine-user token" prompt of `devbox secrets`.
 Why classic: fine-grained tokens can't be used on repos where the user is only a collaborator ([docs](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#fine-grained-personal-access-tokens-limitations)). Leaving out the `workflow` scope means pushes that add or change `.github/workflows/` files are rejected ([scopes](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps#available-scopes)).
 
 **4. First login on the box:**
 
 ```bash
-make login NAME=my-proj   # session opens as ubuntu: claude auth login
+devbox open my-proj   # starts the box if needed; session opens as ubuntu: claude auth login
 ```
 
 Then, still as ubuntu, accept the workspace trust prompt once (Remote Control runs headless and exits with "Workspace not trusted" otherwise). `ubuntu` has no sudo, so `exit` back to `ssm-user` to restart the service:
@@ -76,11 +84,11 @@ Must be the claude.ai login, not `setup-token`. After this, Remote Control comes
 
 ## Daily usage
 
-`make start NAME=my-proj` (or a phone shortcut), work via the Claude app or `make ssh NAME=my-proj`; the box stops itself when idle. Also: `make stop|status NAME=...`, `make list`. To run on GPU: review the pushed commit's whole diff (including `pyproject.toml`/`uv.lock`), then trigger the project's `run-experiments` workflow with the SHA and configs.
+`devbox start my-proj` (or a phone shortcut), work via the Claude app or `devbox open my-proj`; the box stops itself when idle. Also: `devbox stop|status my-proj`, `devbox ls`. To run on GPU: review the pushed commit's whole diff (including `pyproject.toml`/`uv.lock`), then trigger the project's `run-experiments` workflow with the SHA and configs.
 
-**Admin on the box:** `make ssh` lands as `ubuntu` (no sudo); `exit` drops you to `ssm-user`, which has sudo. Never run repo code (`make check`, `uv run`, git hooks) as `ssm-user`: it would run agent-written code with sudo.
+**Admin on the box:** `devbox open` lands as `ubuntu` (no sudo); `exit` drops you to `ssm-user`, which has sudo. Never run repo code (`make check`, `uv run`, git hooks) as `ssm-user`: it would run agent-written code with sudo.
 
-**Sandbox and egress allowlist:** Claude Code's sandbox and network allowlist are enforced by the root-owned `/etc/claude-code/managed-settings.json` (from `infra/scripts/managed-settings.json`); the project's `.claude/settings.json` can't loosen them. To allow a domain: edit `infra/scripts/managed-settings.json`, `terraform -chdir=infra/terraform apply`, then reboot the box (`sudo reboot` as ssm-user, or `make stop` + `make start`).
+**Sandbox and egress allowlist:** Claude Code's sandbox and network allowlist are enforced by the root-owned `/etc/claude-code/managed-settings.json` (from `infra/scripts/managed-settings.json`); the project's `.claude/settings.json` can't loosen them. To allow a domain: edit `infra/scripts/managed-settings.json`, `terraform -chdir=infra/terraform apply`, then reboot the box (`sudo reboot` as ssm-user, or `devbox stop` + `devbox start`).
 
 ## Updates
 
@@ -90,7 +98,7 @@ Must be the claude.ai login, not `setup-token`. After this, Remote Control comes
 ## Retiring a project
 
 ```bash
-make retire NAME=my-proj
+devbox retire my-proj
 ```
 
 Asks you to type the name, stops the box, removes the JSON, plans, aborts if the plan touches anything but this project's resources (or anything other than deletes), asks y/N, applies, prints the final data-volume snapshot ID and the `aws ec2 delete-snapshot` command, and commits the removal. The GitHub repo is never touched (only its `modal` Environment and branch protection go). Terraform also removes the machine user's collaborator access; revoke the token you made for this project.
@@ -102,19 +110,23 @@ The agent on each box is treated as potentially hostile (prompt injection via co
 - **It has:** its project repo checkout, a machine-user token that can push branches and open PRs on the repos that user collaborates on, CPU, and network egress only to the managed-settings allowlist (incl. github.com).
 - **It can't:** read the Modal token or W&B key (they live in GitHub Environment / Modal secrets, never on the box), start a GPU run without your Environment approval, see run output, merge to the default branch or approve its own PRs, push workflow files, use sudo, reach IMDS from the sandbox, or loosen the managed settings.
 - **Residual risks:**
-  - The agent can read its own repo token and push anything to non-default branches of every repo the machine user collaborates on (use one machine user per project if that matters).
+  - The agent can read its own repo token and push anything to non-default branches of every repo the machine user collaborates on (to scope tokens per repo, move project repos into a free GitHub org: a single machine user can then hold one fine-grained token per repo, without Actions/Workflows permissions; GitHub allows only one free machine account per person).
   - github.com egress means it can exfiltrate code it can read to GitHub.
   - A GPU run executes the commit's code on the Actions runner with the Modal token in env (`modal run` imports it; `uv sync` in the image build runs its dependencies). Review the whole diff, including `pyproject.toml` and `uv.lock`, before you trigger a run. The Modal workspace spend limit is the budget backstop.
 
 ## Dev
 
-`make fmt`, `make validate`, `make help`.
+```bash
+uv run pytest                       # CLI plan-scope check
+terraform -chdir=infra/terraform fmt -recursive
+terraform -chdir=infra/terraform init -backend=false && terraform -chdir=infra/terraform validate
+```
 
 ## Manual acceptance checklist (needs a real AWS box)
 
 - [ ] `terraform plan` is clean with two example projects against an existing VPC.
-- [ ] `make new-project` creates only that project's resources; `make retire` destroys only that project's, leaves a final data-volume snapshot and the GitHub repo intact.
-- [ ] `make secrets` sets values without them appearing in Terraform state, shell history or files.
+- [ ] `devbox add` creates only that project's resources; `devbox retire` destroys only that project's, leaves a final data-volume snapshot and the GitHub repo intact.
+- [ ] `devbox secrets` sets values without them appearing in Terraform state, shell history or files.
 - [ ] A reboot brings up Remote Control automatically, named after the project.
 - [ ] The box stops itself after the idle window.
 - [ ] On the box: the secrets file is unreadable from inside the sandbox, IMDS is unreachable from containers, `modal` has no credentials, `ubuntu` can't sudo, a non-allowlisted domain is blocked.
