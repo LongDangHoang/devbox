@@ -22,14 +22,14 @@ key    = "devbox/terraform.tfstate"
 region = "ap-southeast-2"
 EOF
 terraform -chdir=infra/terraform init -backend-config=backend.hcl
-export GITHUB_TOKEN=<admin-token>   # local only, never on a box
+gh auth login   # once; devbox hands this login to Terraform (never exported, never on a box)
 ```
 
 `terraform.tfvars` and `backend.hcl` are gitignored. Region defaults to `ap-southeast-2`; `devbox` reads `region` from `terraform.tfvars` (override with `devbox --region ...`).
 
 Manual, once:
 
-- **GitHub admin token for Terraform** (`GITHUB_TOKEN`, your account): classic token with `repo`, or fine-grained with Administration + Environments + Secrets read/write on the project repos. Note: required reviewers on environments of private repos need GitHub Pro/Team for personal accounts.
+- **GitHub admin access for Terraform:** no separate token. `devbox` runs Terraform with `GITHUB_TOKEN=$(gh auth token)` (your `gh` login, default `repo` scope) set only for that process. Running `terraform plan/apply` by hand? Prefix it the same way: `GITHUB_TOKEN=$(gh auth token) terraform ...`. Note: required reviewers on environments of private repos need GitHub Pro/Team for personal accounts.
 - **Private devbox repo:** devbox Settings -> Actions -> General -> Access -> "Accessible from repositories owned by the user", so project repos can call the reusable workflow.
 - **Agent machine user:** create a separate GitHub account for the agent (GitHub allows one free machine account per person) and set `agent_github_username` in `terraform.tfvars`. Terraform invites it as a push collaborator on each project repo; the agent's commits and PRs are its own, so it can't approve them.
 - **Branch protection:** the default branch requires a PR with 1 approval, and the latest push must be approved by someone other than its pusher. That someone is you; the agent can open PRs but never merge. Admins aren't enforced, so you can still merge your own PRs (e.g. `copier update`) directly.

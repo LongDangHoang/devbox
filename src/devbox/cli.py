@@ -3,6 +3,7 @@
 import argparse
 import getpass
 import json
+import os
 import re
 import subprocess
 import sys
@@ -24,11 +25,17 @@ def die(msg: str):
     sys.exit(f"error: {msg}")
 
 
-def run(*cmd: str, capture=False, input=None, check=True, cwd=None):
+def run(*cmd: str, capture=False, input=None, check=True, cwd=None, env=None):
     """Run cmd; stderr always goes to the terminal. Returns stdout (capture) or the exit code."""
     try:
         r = subprocess.run(
-            cmd, text=True, input=input, stdout=subprocess.PIPE if capture else None, cwd=cwd, check=False
+            cmd,
+            text=True,
+            input=input,
+            stdout=subprocess.PIPE if capture else None,
+            cwd=cwd,
+            env=env,
+            check=False,
         )
     except FileNotFoundError:
         die(f"{cmd[0]} not found on PATH (see README prerequisites)")
@@ -42,7 +49,11 @@ def aws(*args: str, **kw):
 
 
 def tf(*args: str, **kw):
-    return run("terraform", f"-chdir={TF_DIR}", *args, **kw)
+    # The GitHub provider authenticates as you via your `gh` login; the token lives only in
+    # this child's environment (never your shell, state, or a box).
+    env = os.environ.copy()
+    env.setdefault("GITHUB_TOKEN", run("gh", "auth", "token", capture=True))
+    return run("terraform", f"-chdir={TF_DIR}", *args, env=env, **kw)
 
 
 def default_region() -> str:

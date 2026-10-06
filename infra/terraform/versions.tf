@@ -20,7 +20,7 @@ provider "aws" {
   region = var.region
 }
 
-# Admin token comes from GITHUB_TOKEN on the machine running terraform; never placed on a box.
+# Authenticates via GITHUB_TOKEN, which `devbox` sets from your local `gh` login; never placed on a box.
 provider "github" {
   owner = var.github_owner
 }
