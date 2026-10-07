@@ -1,5 +1,5 @@
 # One-time, applied by a human with admin credentials (local state, gitignored; nothing secret in it):
-#   terraform -chdir=infra/bootstrap init && terraform -chdir=infra/bootstrap apply -var state_bucket=<bucket>
+#   terraform -chdir=infra/bootstrap init && terraform -chdir=infra/bootstrap apply   (values in terraform.tfvars, see README)
 # Creates the identity `devbox` runs as. The guard is accident prevention, not attacker containment:
 # the deployer can't change or delete resources that aren't tagged ManagedBy=devbox.
 
@@ -13,19 +13,14 @@ terraform {
   }
 }
 
-variable "region" {
-  type    = string
-  default = "ap-southeast-2"
-}
+# Must match infra/terraform: `region` in terraform.tfvars and backend.hcl.
+variable "region" { type = string }
 
-# Terraform state bucket/key of infra/terraform (see backend.hcl); its objects (incl. the
+# Must match `bucket`/`key` in infra/terraform/backend.hcl; its objects (incl. the
 # <key>.tflock lock file) are exempt from the delete guard.
 variable "state_bucket" { type = string }
 
-variable "state_key" {
-  type    = string
-  default = "devbox/terraform.tfstate"
-}
+variable "state_key" { type = string }
 
 provider "aws" {
   region = var.region

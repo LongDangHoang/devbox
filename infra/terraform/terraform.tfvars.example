@@ -1,4 +1,4 @@
-region                   = "ap-southeast-2"
+region                   = "<region>" # e.g. ap-southeast-2; must match backend.hcl and infra/bootstrap
 vpc_id                   = "vpc-xxxxxxxx"
 subnet_id                = "subnet-xxxxxxxx"
 default_instance_type    = "m7g.xlarge"

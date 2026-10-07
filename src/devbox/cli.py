@@ -24,7 +24,7 @@ SESSION_CMD = 'sudo -iu ubuntu; echo "now admin (sudo available); exit again to 
 # Shared, project-independent resources a scoped plan may create (the first `devbox add` makes them).
 SHARED = ("aws_security_group.eice", "aws_ec2_instance_connect_endpoint.this")
 PROFILE = os.environ.get("DEVBOX_AWS_PROFILE", "devbox")
-REGION = "ap-southeast-2"  # overwritten in main()
+REGION = ""  # set in main(): --region or `region` in terraform.tfvars
 
 
 def die(msg: str):
@@ -80,10 +80,10 @@ def tf(*args: str, **kw):
     return run("terraform", f"-chdir={TF_DIR}", *args, env=env, **kw)
 
 
-def default_region() -> str:
+def default_region() -> str | None:
     f = TF_DIR / "terraform.tfvars"
     m = f.exists() and re.search(r'^\s*region\s*=\s*"([^"]+)"', f.read_text(), re.MULTILINE)
-    return m.group(1) if m else REGION
+    return m.group(1) if m else None
 
 
 def project_file(name: str) -> Path:
@@ -389,6 +389,8 @@ def main():
     cmd("retire", cmd_retire, "destroy a project's resources (scoped), keep final snapshot and repo")
 
     a = p.parse_args()
+    if not a.region:
+        die("no region: set `region` in infra/terraform/terraform.tfvars or pass --region")
     REGION = a.region
     try:
         a.fn(a)

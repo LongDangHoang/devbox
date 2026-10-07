@@ -16,9 +16,26 @@ uv tool install -e .   # puts `devbox` on PATH; `devbox --help` lists commands
 
 **AWS identity.** `devbox` never uses your admin credentials. It runs as the `devbox-deployer` role (PowerUserAccess, capped by the `devbox-deployer-boundary` permissions boundary), assumed with MFA by a dedicated `devbox-operator` user:
 
-1. As admin, once: `terraform -chdir=infra/bootstrap init && terraform -chdir=infra/bootstrap apply -var state_bucket=<state-bucket>` (add `-var region=...` / `-var state_key=...` if not the defaults). Local state, gitignored, nothing secret in it. Outputs the role ARN.
+0. Pick three values and use them everywhere below. Nothing has a default:
+   - `<region>`: where the boxes run (e.g. `ap-southeast-2`).
+   - `<state-bucket>`: an existing S3 bucket for Terraform state.
+   - `<state-key>`: the state file's path in that bucket (e.g. `devbox/terraform.tfstate`).
 
-   This creates the user, the role, and the user's only permission: inline policy `assume-devbox-deployer`, allowing `sts:AssumeRole` on the role. Without it, `devbox auth` fails with `AccessDenied`. **Already have a `devbox-operator` user or `devbox-deployer` role?** The apply fails with `EntityAlreadyExists`. Delete the old role (nothing in it is worth keeping), and import the user so its access key and MFA device survive: `terraform -chdir=infra/bootstrap import -var state_bucket=<state-bucket> aws_iam_user.operator devbox-operator`, then apply. Terraform only manages the policies it declares, so remove any other policies or groups on the user in the console. If you created the user by hand and won't use Terraform for it, attach this inline policy yourself:
+   The bootstrap guard exempts `<state-key>` and its `.tflock` lock file from the delete deny, so these must match `backend.hcl` exactly.
+1. As admin, once:
+
+   ```bash
+   cat > infra/bootstrap/terraform.tfvars <<'EOF'   # gitignored
+   region       = "<region>"
+   state_bucket = "<state-bucket>"
+   state_key    = "<state-key>"
+   EOF
+   terraform -chdir=infra/bootstrap init && terraform -chdir=infra/bootstrap apply
+   ```
+
+   Local state, gitignored, nothing secret in it. Outputs the role ARN.
+
+   This creates the user, the role, and the user's only permission: inline policy `assume-devbox-deployer`, allowing `sts:AssumeRole` on the role. Without it, `devbox auth` fails with `AccessDenied`. **Already have a `devbox-operator` user or `devbox-deployer` role?** The apply fails with `EntityAlreadyExists`. Delete the old role (nothing in it is worth keeping), and import the user so its access key and MFA device survive: `terraform -chdir=infra/bootstrap import aws_iam_user.operator devbox-operator`, then apply. Terraform only manages the policies it declares, so remove any other policies or groups on the user in the console. If you created the user by hand and won't use Terraform for it, attach this inline policy yourself:
 
    ```json
    {
@@ -31,7 +48,7 @@ uv tool install -e .   # puts `devbox` on PATH; `devbox --help` lists commands
 
    ```ini
    [profile devbox-operator]
-   region = ap-southeast-2
+   region = <region>
 
    [profile devbox]
    role_arn = arn:aws:iam::<acct>:role/devbox-deployer
@@ -52,16 +69,16 @@ uv tool install -e .   # puts `devbox` on PATH; `devbox --help` lists commands
 ```bash
 cp infra/terraform/terraform.tfvars.example infra/terraform/terraform.tfvars   # region, VPC/subnet, GitHub owner, agent_github_username...
 cat > infra/terraform/backend.hcl <<'EOF'
-bucket       = "<state-bucket>"
-key          = "devbox/terraform.tfstate"
-region       = "ap-southeast-2"
+bucket       = "<state-bucket>"   # same three values as infra/bootstrap/terraform.tfvars
+key          = "<state-key>"
+region       = "<region>"
 use_lockfile = true
 EOF
 AWS_PROFILE=devbox terraform -chdir=infra/terraform init -backend-config=backend.hcl
 gh auth login   # once; devbox hands this login to Terraform (never exported, never on a box)
 ```
 
-`terraform.tfvars` and `backend.hcl` are gitignored. Region defaults to `ap-southeast-2`; `devbox` reads `region` from `terraform.tfvars` (override with `devbox --region ...`).
+`terraform.tfvars` and `backend.hcl` are gitignored. Set `region` in `terraform.tfvars` to `<region>`. `devbox` reads it from there (override with `devbox --region ...`), and errors if it's missing.
 
 **Access to the boxes:** one EC2 Instance Connect Endpoint (EICE) in `subnet_id`, created by the first `devbox add` (AWS allows one per VPC). Boxes have no internet-reachable ports: their SG accepts tcp 22 only from the endpoint's SG (this replaces spec rule 5's "no inbound ports; access only through SSM"). `devbox` pushes a throwaway SSH key (valid 60s) with `ec2-instance-connect send-ssh-public-key` and connects through `ec2-instance-connect open-tunnel`, both IAM-gated.
 
