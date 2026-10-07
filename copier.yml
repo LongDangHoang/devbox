@@ -20,8 +20,8 @@ package_name:
 
 python_version:
   type: str
-  default: "3.12"
-  help: Python version (3.12 max while macOS x86_64 torch 2.2.2 is supported)
+  default: "3.14"
+  help: Python version (3.10+; torch>=2.9 and Modal's debian_slim support it)
 
 default_gpu:
   type: str
