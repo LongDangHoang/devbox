@@ -60,6 +60,7 @@ resource "aws_iam_user_policy" "operator" {
 resource "aws_iam_role" "deployer" {
   name                 = "devbox-deployer"
   max_session_duration = 14400 # 4h, so a long apply doesn't outlive its credentials
+  permissions_boundary = aws_iam_policy.boundary.arn
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -71,19 +72,44 @@ resource "aws_iam_role" "deployer" {
   })
 }
 
-# Everything except iam/organizations/account (it does allow iam:CreateServiceLinkedRole, which the
-# EC2 Instance Connect Endpoint needs on first create). So the role can't edit its own guard.
+# What the role is granted. The boundary below caps it, so attaching something broader later
+# (even AdministratorAccess) can't exceed the boundary.
 resource "aws_iam_role_policy_attachment" "power_user" {
   role       = aws_iam_role.deployer.name
   policy_arn = "arn:aws:iam::aws:policy/PowerUserAccess"
 }
 
-resource "aws_iam_role_policy" "guard" {
-  name = "devbox-guard"
-  role = aws_iam_role.deployer.id
+# Permissions boundary: effective permissions = PowerUserAccess ∩ the Allows here, minus the Denies.
+# The role has no IAM permissions, so it can't edit or detach its own boundary.
+resource "aws_iam_policy" "boundary" {
+  name        = "devbox-deployer-boundary"
+  description = "Ceiling for devbox-deployer: no IAM/STS hops, one region, no changes to non-devbox resources"
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
+      {
+        # Ceiling: everything except identity/account administration and role hopping.
+        Sid       = "Ceiling"
+        Effect    = "Allow"
+        NotAction = ["iam:*", "sts:*", "organizations:*", "account:*"]
+        Resource  = "*"
+      },
+      {
+        # The EC2 Instance Connect Endpoint creates its service-linked role on first use.
+        Sid       = "InstanceConnectServiceLinkedRole"
+        Effect    = "Allow"
+        Action    = "iam:CreateServiceLinkedRole"
+        Resource  = "*"
+        Condition = { StringEquals = { "iam:AWSServiceName" = "ec2-instance-connect.amazonaws.com" } }
+      },
+      {
+        # Budgets is served from us-east-1; everything else must stay in the devbox region.
+        Sid       = "OnlyDevboxRegion"
+        Effect    = "Deny"
+        NotAction = ["budgets:*", "iam:*", "sts:*"]
+        Resource  = "*"
+        Condition = { StringNotEquals = { "aws:RequestedRegion" = var.region } }
+      },
       {
         Sid    = "Ec2OnlyDevboxTagged"
         Effect = "Deny"
@@ -115,18 +141,16 @@ resource "aws_iam_role_policy" "guard" {
         Action      = "budgets:ModifyBudget"
         NotResource = ["arn:aws:budgets::${local.account}:budget/devbox-*"]
       },
-      {
-        Sid      = "KeepServiceLinkedRoles"
-        Effect   = "Deny"
-        Action   = "iam:DeleteServiceLinkedRole"
-        Resource = "*"
-      },
     ]
   })
 }
 
 output "operator_user" {
   value = aws_iam_user.operator.name
+}
+
+output "boundary_policy_arn" {
+  value = aws_iam_policy.boundary.arn
 }
 
 output "deployer_role_arn" {

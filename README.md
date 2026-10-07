@@ -14,7 +14,7 @@ Install the CLI once from this repo (editable, so it finds `infra/`):
 uv tool install -e .   # puts `devbox` on PATH; `devbox --help` lists commands
 ```
 
-**AWS identity.** `devbox` never uses your admin credentials. It runs as the `devbox-deployer` role (PowerUserAccess plus a guard), assumed with MFA by a dedicated `devbox-operator` user:
+**AWS identity.** `devbox` never uses your admin credentials. It runs as the `devbox-deployer` role (PowerUserAccess, capped by the `devbox-deployer-boundary` permissions boundary), assumed with MFA by a dedicated `devbox-operator` user:
 
 1. As admin, once: `terraform -chdir=infra/bootstrap init && terraform -chdir=infra/bootstrap apply -var state_bucket=<state-bucket>` (add `-var region=...` / `-var state_key=...` if not the defaults). Local state, gitignored, nothing secret in it. Outputs the role ARN.
 2. In the IAM console (as admin): on user `devbox-operator`, assign an MFA device and create an access key.
@@ -33,7 +33,7 @@ uv tool install -e .   # puts `devbox` on PATH; `devbox --help` lists commands
 
 4. `devbox auth` prompts for the MFA code and shows who you are. The AWS CLI caches the 4h session in `~/.aws/cli/cache`; each `devbox` run takes the keys from `aws configure export-credentials --profile devbox` and hands them only to its own `aws`/`terraform`/`ssh` child processes. Other profile name: `DEVBOX_AWS_PROFILE`. By hand: `aws --profile devbox ...`.
 
-**The guard** is accident prevention, not attacker containment (a compromised laptop is game over anyway). The deployer can create things, but can't terminate/stop/modify/delete EC2 resources, delete S3/RDS/DynamoDB/Lambda/... resources, or change budgets unless they're tagged `ManagedBy=devbox` (Terraform tags everything here via `default_tags`; budgets match by the `devbox-` name prefix). Objects under the state key are exempt. It has no IAM access, so it can't loosen its own guard. If a devbox operation hits `AccessDenied`, add a narrowly scoped exception in `infra/bootstrap/main.tf` and re-apply as admin. Later, IAM Access Analyzer can generate a least-privilege policy from CloudTrail to replace PowerUserAccess.
+**The guard** is accident prevention, not attacker containment (a compromised laptop is game over anyway). The deployer can create things, but can't terminate/stop/modify/delete EC2 resources, delete S3/RDS/DynamoDB/Lambda/... resources, or change budgets unless they're tagged `ManagedBy=devbox` (Terraform tags everything here via `default_tags`; budgets match by the `devbox-` name prefix). Objects under the state key are exempt. The guard is a permissions boundary (`devbox-deployer-boundary`): it also blocks all IAM except creating the Instance Connect service-linked role, blocks `sts` role hopping, and keeps everything in your region (budgets excepted). It caps the role even if you attach a broader policy later, and the role can't edit its own boundary. If a devbox operation hits `AccessDenied`, add a narrowly scoped exception in `infra/bootstrap/main.tf` and re-apply as admin. Later, IAM Access Analyzer can generate a least-privilege policy from CloudTrail to replace PowerUserAccess.
 
 ```bash
 cp infra/terraform/terraform.tfvars.example infra/terraform/terraform.tfvars   # region, VPC/subnet, GitHub owner, agent_github_username...
