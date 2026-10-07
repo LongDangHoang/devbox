@@ -1,0 +1,54 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "Ceiling",
+      "Effect": "Allow",
+      "NotAction": ["iam:*", "sts:*", "organizations:*", "account:*"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "InstanceConnectServiceLinkedRole",
+      "Effect": "Allow",
+      "Action": "iam:CreateServiceLinkedRole",
+      "Resource": "*",
+      "Condition": { "StringEquals": { "iam:AWSServiceName": "ec2-instance-connect.amazonaws.com" } }
+    },
+    {
+      "Sid": "OnlyDevboxRegion",
+      "Effect": "Deny",
+      "NotAction": ["budgets:*", "iam:*", "sts:*"],
+      "Resource": "*",
+      "Condition": { "StringNotEquals": { "aws:RequestedRegion": "<region>" } }
+    },
+    {
+      "Sid": "Ec2OnlyDevboxTagged",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:Terminate*", "ec2:Delete*", "ec2:Detach*", "ec2:Disassociate*", "ec2:Modify*",
+        "ec2:Revoke*", "ec2:Authorize*", "ec2:Replace*", "ec2:Stop*", "ec2:Reboot*"
+      ],
+      "NotResource": ["arn:aws:ec2:*:*:security-group-rule/*"],
+      "Condition": { "StringNotEquals": { "aws:ResourceTag/ManagedBy": "devbox" } }
+    },
+    {
+      "Sid": "DeletesOnlyDevboxTagged",
+      "Effect": "Deny",
+      "Action": [
+        "s3:Delete*", "dynamodb:Delete*", "rds:Delete*", "lambda:Delete*", "logs:Delete*",
+        "ecr:Delete*", "ecs:Delete*", "eks:Delete*", "elasticloadbalancing:Delete*",
+        "elasticfilesystem:Delete*", "cloudformation:Delete*", "route53:Delete*",
+        "secretsmanager:Delete*", "sns:Delete*", "sqs:Delete*", "backup:Delete*",
+        "cloudtrail:Delete*", "cloudtrail:StopLogging", "kms:ScheduleKeyDeletion", "kms:DisableKey"
+      ],
+      "NotResource": ["arn:aws:s3:::<state-bucket>/<state-key>*"],
+      "Condition": { "StringNotEquals": { "aws:ResourceTag/ManagedBy": "devbox" } }
+    },
+    {
+      "Sid": "BudgetsOnlyDevbox",
+      "Effect": "Deny",
+      "Action": "budgets:ModifyBudget",
+      "NotResource": ["arn:aws:budgets::<account>:budget/devbox-*"]
+    }
+  ]
+}

@@ -244,6 +244,11 @@ def cmd_auth(_):
     print(aws("sts", "get-caller-identity", "--output", "table"))
 
 
+def cmd_tf(a):
+    """Terraform in infra/terraform with the deployer credentials and your gh login (Terraform can't prompt for MFA)."""
+    sys.exit(tf(*a.args, check=False))
+
+
 def cmd_open(a):
     iid = connect(a.name)
     print("First time? Run `claude auth login` (claude.ai login, NOT setup-token).")
@@ -375,6 +380,13 @@ def main():
     cmd(
         "auth", cmd_auth, f"get deployer credentials (profile {PROFILE}, MFA); show identity", with_name=False
     )
+    tfp = cmd(
+        "tf",
+        cmd_tf,
+        "run terraform in infra/terraform as the deployer, e.g. `devbox tf plan`",
+        with_name=False,
+    )
+    tfp.add_argument("args", nargs=argparse.REMAINDER, help="terraform arguments")
     cmd("ls", cmd_ls, "list projects with repo and box state", with_name=False)
     add = cmd("add", cmd_add, "add a project: write its JSON, apply (scoped), commit")
     add.add_argument("repo", help="GitHub repo, owner/name (must exist)")

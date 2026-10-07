@@ -18,7 +18,7 @@ terraform {
 
 provider "aws" {
   region = var.region
-  # The deployer role's guard (infra/bootstrap) only lets it change/delete resources with this tag.
+  # The deployer role's boundary (infra/iam/deployer-boundary.json) only lets it change/delete resources with this tag.
   default_tags {
     tags = { ManagedBy = "devbox" }
   }
