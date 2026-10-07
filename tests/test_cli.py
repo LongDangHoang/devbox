@@ -11,16 +11,18 @@ def test_scoped_plan_check():
             rc('module.devbox["a"].aws_instance.this', "delete"),
             rc('module.github_project["a"].github_branch_protection.default', "delete"),
             rc('module.devbox["a"].data.aws_ami.ubuntu', "read"),
-            rc('aws_s3_object.scripts["bootstrap.sh"]', "update"),
+            rc("aws_ec2_instance_connect_endpoint.this", "create"),
+            rc("aws_security_group.eice", "create"),
             rc('module.devbox["b"].aws_instance.this', "no-op"),
         ]
     }
     assert plan_violations(plan, "a", "delete") == (2, [])
-    # Prefix lookalike, other projects, and replace/other actions are all violations.
+    # Prefix lookalike, other projects, replace/other actions, and non-create shared changes are violations.
     plan["resource_changes"] += [
+        rc("aws_ec2_instance_connect_endpoint.this", "delete"),
         rc('module.devbox["ab"].aws_instance.this', "delete"),
         rc('module.devbox["b"].aws_instance.this', "update"),
         rc('module.devbox["a"].aws_ebs_volume.data', "delete", "create"),
     ]
     n, bad = plan_violations(plan, "a", "delete")
-    assert n == 2 and len(bad) == 3
+    assert n == 2 and len(bad) == 4

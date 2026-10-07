@@ -2,7 +2,7 @@
 Description=Claude Code Remote Control server
 After=network-online.target setup-boot.service
 Wants=network-online.target
-# Never start if bootstrap (IMDS lock, sudo removal, managed settings) failed.
+# Never start if bootstrap (sudo removal, managed settings) failed.
 Requires=setup-boot.service
 
 [Service]

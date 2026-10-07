@@ -1,10 +1,13 @@
 #!/bin/bash
-set -euxo pipefail
-mkdir -p /etc/devbox
-cat > /etc/devbox/boot.conf <<'EOF'
-SCRIPTS_S3=s3://${bucket}/${prefix}
-AWS_REGION=${region}
-EOF
-command -v aws >/dev/null || snap install aws-cli --classic
-aws s3 cp --region ${region} s3://${bucket}/${prefix}/setup-boot.service /etc/systemd/system/setup-boot.service
-systemctl daemon-reload && systemctl enable --now setup-boot.service
+# First boot only (cloud-init). Installs infra/scripts/* and enables setup-boot.service.
+set -euo pipefail
+install -d -m 0755 /opt/devbox/scripts
+%{ for f, content in files ~}
+cat > /opt/devbox/scripts/${f} <<'DEVBOX_EOF'
+${content}
+DEVBOX_EOF
+%{ endfor ~}
+chmod 0755 /opt/devbox/scripts/*.sh
+install -m 0644 /opt/devbox/scripts/setup-boot.service /etc/systemd/system/setup-boot.service
+systemctl daemon-reload
+systemctl enable --now --no-block setup-boot.service

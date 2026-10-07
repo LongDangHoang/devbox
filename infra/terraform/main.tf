@@ -5,31 +5,36 @@ locals {
   }
 }
 
-resource "aws_s3_object" "scripts" {
-  for_each = fileset("${path.module}/../scripts", "*")
+# Shared by all boxes: the only way in (SSH via `aws ec2-instance-connect open-tunnel`, IAM-gated).
+# Its egress rules (tcp 22 to each box SG) live in modules/devbox so adding a project stays scoped.
+# Limit: one EC2 Instance Connect Endpoint per VPC.
+resource "aws_security_group" "eice" {
+  name        = "devbox-eice"
+  description = "devbox EC2 Instance Connect Endpoint: egress 22 to boxes only"
+  vpc_id      = var.vpc_id
+  tags        = { Name = "devbox-eice" }
+}
 
-  bucket = var.scripts_bucket
-  key    = "${var.scripts_prefix}/${each.value}"
-  source = "${path.module}/../scripts/${each.value}"
-  etag   = filemd5("${path.module}/../scripts/${each.value}")
+resource "aws_ec2_instance_connect_endpoint" "this" {
+  subnet_id          = var.subnet_id
+  security_group_ids = [aws_security_group.eice.id]
+  preserve_client_ip = false
+  tags               = { Name = "devbox" }
 }
 
 module "devbox" {
   source   = "./modules/devbox"
   for_each = local.projects
 
-  name           = each.key
-  repo           = each.value.repo
-  instance_type  = try(each.value.instance_type, var.default_instance_type)
-  data_gb        = try(each.value.data_gb, var.default_data_gb)
-  idle_minutes   = var.idle_minutes
-  vpc_id         = var.vpc_id
-  subnet_id      = var.subnet_id
-  region         = var.region
-  scripts_bucket = var.scripts_bucket
-  scripts_prefix = var.scripts_prefix
+  name          = each.key
+  repo          = each.value.repo
+  instance_type = try(each.value.instance_type, var.default_instance_type)
+  data_gb       = try(each.value.data_gb, var.default_data_gb)
+  idle_minutes  = var.idle_minutes
+  vpc_id        = var.vpc_id
+  subnet_id     = var.subnet_id
+  eice_sg_id    = aws_security_group.eice.id
 
-  egress_cidrs       = var.egress_cidrs
   budget_email       = var.budget_email
   monthly_budget_usd = var.monthly_budget_usd
 }

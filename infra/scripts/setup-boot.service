@@ -1,5 +1,5 @@
 [Unit]
-Description=Pull devbox scripts from S3 and run bootstrap
+Description=devbox boot setup (bootstrap.sh)
 After=network-online.target
 Wants=network-online.target
 
@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=oneshot
 RemainAfterExit=yes
 TimeoutStartSec=1800
-ExecStart=/bin/bash -c '. /etc/devbox/boot.conf && export AWS_DEFAULT_REGION=$AWS_REGION && aws s3 sync "$SCRIPTS_S3" /opt/devbox/scripts --delete && chmod +x /opt/devbox/scripts/*.sh && exec /opt/devbox/scripts/bootstrap.sh'
+ExecStart=/opt/devbox/scripts/bootstrap.sh
 
 [Install]
 WantedBy=multi-user.target

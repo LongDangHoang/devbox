@@ -6,3 +6,4 @@ terraform.tfvars
 backend.hcl
 .venv/
 __pycache__/
+.env

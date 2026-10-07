@@ -1,23 +1,29 @@
-"""devbox: manage per-project Claude Code dev boxes (wraps terraform, aws and gh)."""
+"""devbox: manage per-project Claude Code dev boxes (wraps terraform, aws, ssh and gh)."""
 
 import argparse
+import functools
 import getpass
+import io
 import json
 import os
 import re
 import subprocess
 import sys
+import tarfile
+import tempfile
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]  # needs an editable install (`uv tool install -e .`)
 PROJECTS = ROOT / "infra" / "projects"
 TF_DIR = ROOT / "infra" / "terraform"
+SCRIPTS = ROOT / "infra" / "scripts"
 LIVE = "Name=instance-state-name,Values=pending,running,stopping,stopped"
-# Shell as ubuntu (no sudo); `exit` drops to ssm-user (has sudo) for admin. SSM runs this via sh -c.
-SESSION_CMD = 'sudo -iu ubuntu; echo "now ssm-user (sudo available); exit again to end"; exec bash -l'
-# Shared, project-independent resources a scoped plan may also touch.
-SHARED = ("aws_s3_object.scripts",)
+# Shell as ubuntu (no sudo); `exit` drops to admin (has sudo).
+SESSION_CMD = 'sudo -iu ubuntu; echo "now admin (sudo available); exit again to end"; exec bash -l'
+# Shared, project-independent resources a scoped plan may create (the first `devbox add` makes them).
+SHARED = ("aws_security_group.eice", "aws_ec2_instance_connect_endpoint.this")
+PROFILE = os.environ.get("DEVBOX_AWS_PROFILE", "devbox")
 REGION = "ap-southeast-2"  # overwritten in main()
 
 
@@ -30,7 +36,7 @@ def run(*cmd: str, capture=False, input=None, check=True, cwd=None, env=None):
     try:
         r = subprocess.run(
             cmd,
-            text=True,
+            text=not isinstance(input, bytes),
             input=input,
             stdout=subprocess.PIPE if capture else None,
             cwd=cwd,
@@ -44,14 +50,32 @@ def run(*cmd: str, capture=False, input=None, check=True, cwd=None, env=None):
     return r.stdout.strip() if capture else r.returncode
 
 
+@functools.cache
+def aws_env() -> dict:
+    """Child env with the deployer role's temporary credentials, resolved once per invocation.
+    The AWS CLI prompts for MFA on the tty (stdin inherited) and caches the session itself;
+    devbox only puts the keys into child environments, never on disk."""
+    out = run(
+        "aws", "configure", "export-credentials", "--profile", PROFILE, "--format", "process", capture=True
+    )
+    c = json.loads(out)
+    env = {k: v for k, v in os.environ.items() if k not in ("AWS_PROFILE", "AWS_DEFAULT_PROFILE")}
+    env.update(
+        AWS_ACCESS_KEY_ID=c["AccessKeyId"],
+        AWS_SECRET_ACCESS_KEY=c["SecretAccessKey"],
+        AWS_SESSION_TOKEN=c["SessionToken"],
+    )
+    return env
+
+
 def aws(*args: str, **kw):
-    return run("aws", "--region", REGION, *args, capture=True, **kw)
+    return run("aws", "--region", REGION, *args, capture=True, env=aws_env(), **kw)
 
 
 def tf(*args: str, **kw):
     # The GitHub provider authenticates as you via your `gh` login; the token lives only in
     # this child's environment (never your shell, state, or a box).
-    env = os.environ.copy()
+    env = aws_env().copy()
     env.setdefault("GITHUB_TOKEN", run("gh", "auth", "token", capture=True))
     return run("terraform", f"-chdir={TF_DIR}", *args, env=env, **kw)
 
@@ -107,7 +131,7 @@ def plan_violations(plan: dict, name: str, action: str) -> tuple[int, list[str]]
     n, bad = 0, []
     for rc in plan.get("resource_changes", []):
         addr, acts = rc["address"], rc["change"]["actions"]
-        if acts in (["no-op"], ["read"]) or addr.startswith(SHARED):
+        if acts in (["no-op"], ["read"]) or (addr.startswith(SHARED) and acts == ["create"]):
             continue
         if addr.startswith(mine) and acts == [action]:
             n += 1
@@ -139,13 +163,41 @@ def git_commit(path: Path, msg: str):
     run("git", "commit", "-m", msg, "--", rel, cwd=ROOT)
 
 
-def session(iid: str) -> int:
-    return run(
-        "aws", "ssm", "start-session", "--region", REGION, "--target", iid,
-        "--document-name", "AWS-StartInteractiveCommand",
-        "--parameters", json.dumps({"command": [SESSION_CMD]}),
-        check=False,
-    )  # fmt: skip
+def ssh(iid: str, remote_cmd: str | None = None, input=None, os_user: str = "admin") -> int:
+    """SSH via the EC2 Instance Connect Endpoint with a throwaway key (valid 60s on the box).
+    `aws ec2-instance-connect ssh` can't run a remote command, hence plain ssh + open-tunnel.
+    Interactive (with a tty) when input is None; otherwise input is fed to remote_cmd's stdin."""
+    with tempfile.TemporaryDirectory() as d:
+        key = f"{d}/key"
+        run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key)
+        aws(
+            "ec2-instance-connect", "send-ssh-public-key", "--instance-id", iid,
+            "--instance-os-user", os_user, "--ssh-public-key", f"file://{key}.pub",
+        )  # fmt: skip
+        # ponytail: host key accepted per connection (tmp known_hosts); the IAM-authenticated
+        # tunnel to the instance's private IP is the trust anchor. Pin keys if that ever matters.
+        return run(
+            "ssh", "-i", key, "-o", "IdentitiesOnly=yes", "-o", "ConnectTimeout=15",
+            "-o", f"ProxyCommand=aws --region {REGION} ec2-instance-connect open-tunnel --instance-id %h",
+            "-o", "StrictHostKeyChecking=accept-new", "-o", f"UserKnownHostsFile={d}/known_hosts",
+            *(["-t"] if input is None else []), f"{os_user}@{iid}", *([remote_cmd] if remote_cmd else []),
+            input=input, check=False, env=aws_env(),
+        )  # fmt: skip
+
+
+def connect(name: str) -> str:
+    """Start the box if needed and wait until admin can SSH in (first boot creates admin)."""
+    iid = instance_id(name)
+    if state(iid) != "running":
+        print(f"Starting {iid}...")
+        aws("ec2", "start-instances", "--instance-ids", iid)
+        aws("ec2", "wait", "instance-running", "--instance-ids", iid)
+    print("Waiting for SSH...")
+    for _ in range(18):
+        if ssh(iid, "true", input="") == 0:
+            return iid
+        time.sleep(10)
+    die(f"could not SSH to {iid} as admin after ~3 min (first boot still running bootstrap?)")
 
 
 # --- commands
@@ -187,27 +239,15 @@ def cmd_add(a):
     print(f"Next: devbox secrets {a.name}, then devbox open {a.name}")
 
 
+def cmd_auth(_):
+    aws_env()  # MFA prompt if the cached session expired
+    print(aws("sts", "get-caller-identity", "--output", "table"))
+
+
 def cmd_open(a):
-    iid = instance_id(a.name)
-    if state(iid) != "running":
-        print(f"Starting {iid}...")
-        aws("ec2", "start-instances", "--instance-ids", iid)
-        aws("ec2", "wait", "instance-running", "--instance-ids", iid)
-    print("Waiting for SSM agent...")
-    for _ in range(60):
-        s = aws(
-            "ssm", "describe-instance-information",
-            "--filters", f"Key=InstanceIds,Values={iid}",
-            "--query", "InstanceInformationList[0].PingStatus", "--output", "text",
-            check=False,
-        )  # fmt: skip
-        if s == "Online":
-            break
-        time.sleep(5)
-    else:
-        die(f"SSM agent on {iid} not online after 5 min")
+    iid = connect(a.name)
     print("First time? Run `claude auth login` (claude.ai login, NOT setup-token).")
-    sys.exit(session(iid))
+    sys.exit(ssh(iid, SESSION_CMD))
 
 
 def cmd_start(a):
@@ -230,17 +270,39 @@ def cmd_status(a):
 def cmd_secrets(a):
     """Values go only through subprocess stdin: never argv, disk, shell history or Terraform."""
     repo = load_project(a.name)["repo"]
-    param = f"/devbox/{a.name}/github_token"
     print("Empty input skips a secret. Input is hidden.")
-    if tok := getpass.getpass(f"Agent machine-user token (-> SSM {param}): "):
-        payload = {"Name": param, "Value": tok, "Type": "SecureString", "Overwrite": True}
-        aws("ssm", "put-parameter", "--cli-input-json", "file:///dev/stdin", input=json.dumps(payload))
-        print(f"  set SSM {param} (reboot the box to pick it up)")
+    if tok := getpass.getpass("Agent machine-user token (-> box /etc/devbox/github_token): "):
+        iid = connect(a.name)
+        cmd = (
+            "sudo install -D -o root -g root -m 0600 /dev/stdin /etc/devbox/github_token"
+            " && sudo systemctl restart setup-boot.service"
+        )
+        if ssh(iid, cmd, input=tok):
+            die("failed to store the token on the box")
+        print("  stored on the box and re-ran setup (git credentials, clone)")
     for s in ("MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET"):
         if val := getpass.getpass(f"{s} (-> {repo} env modal): "):
             run("gh", "secret", "set", s, "--env", "modal", "--repo", repo, input=val)
     print("W&B (if used) is a Modal secret, never a GitHub one. With the Modal CLI on the")
     print("dedicated workspace, run once:  modal secret create wandb WANDB_API_KEY=<key>")
+
+
+def cmd_sync(a):
+    """Push infra/scripts/* to /opt/devbox/scripts (root-owned) and re-run bootstrap."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as t:
+        for f in sorted(SCRIPTS.iterdir()):
+            ti = t.gettarinfo(f, f.name)
+            ti.uid = ti.gid = 0
+            ti.uname = ti.gname = "root"
+            ti.mode = 0o755 if f.suffix == ".sh" else 0o644
+            with f.open("rb") as fh:
+                t.addfile(ti, fh)
+    iid = connect(a.name)
+    cmd = "sudo tar -x -C /opt/devbox/scripts && sudo systemctl restart setup-boot.service"
+    if ssh(iid, cmd, input=buf.getvalue()):
+        die("sync failed")
+    print(f"Synced {SCRIPTS.relative_to(ROOT)} to {iid} and re-ran bootstrap")
 
 
 def cmd_retire(a):
@@ -287,7 +349,9 @@ def cmd_retire(a):
         time.sleep(10)
     if snaps:
         print(f"Final snapshot(s) of {volid}: {snaps}")
-        print(f"Delete later: aws ec2 delete-snapshot --region {REGION} --snapshot-id <id>")
+        print(
+            f"Delete later: aws ec2 delete-snapshot --profile {PROFILE} --snapshot-id <id> --region {REGION}"
+        )
     else:
         print(f"warning: no final snapshot found yet for volume {volid or '(unknown)'}", file=sys.stderr)
 
@@ -308,16 +372,20 @@ def main():
         sp.set_defaults(fn=fn)
         return sp
 
+    cmd(
+        "auth", cmd_auth, f"get deployer credentials (profile {PROFILE}, MFA); show identity", with_name=False
+    )
     cmd("ls", cmd_ls, "list projects with repo and box state", with_name=False)
     add = cmd("add", cmd_add, "add a project: write its JSON, apply (scoped), commit")
     add.add_argument("repo", help="GitHub repo, owner/name (must exist)")
     add.add_argument("--type", help="instance type (default from tfvars)")
     add.add_argument("--data-gb", type=int, help="data volume size (default from tfvars)")
-    cmd("open", cmd_open, "start the box if needed and open a shell as ubuntu")
+    cmd("open", cmd_open, "start the box if needed and open a shell as ubuntu (exit -> admin)")
     cmd("start", cmd_start, "start the box")
     cmd("stop", cmd_stop, "stop the box")
     cmd("status", cmd_status, "show the box state")
-    cmd("secrets", cmd_secrets, "set agent token (SSM) and Modal token (GitHub env), hidden input")
+    cmd("secrets", cmd_secrets, "set agent token (on the box) and Modal token (GitHub env), hidden input")
+    cmd("sync", cmd_sync, "push infra/scripts to the box and re-run its bootstrap")
     cmd("retire", cmd_retire, "destroy a project's resources (scoped), keep final snapshot and repo")
 
     a = p.parse_args()

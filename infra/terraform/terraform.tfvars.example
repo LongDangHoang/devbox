@@ -1,8 +1,6 @@
 region                   = "ap-southeast-2"
 vpc_id                   = "vpc-xxxxxxxx"
 subnet_id                = "subnet-xxxxxxxx"
-scripts_bucket           = "my-devbox-bucket"
-scripts_prefix           = "devbox/scripts"
 default_instance_type    = "m7g.xlarge"
 default_data_gb          = 50
 idle_minutes             = 30
@@ -11,4 +9,3 @@ github_reviewer_username = "USERNAME"
 agent_github_username    = "MACHINE_USER"
 budget_email             = "you@example.com"
 monthly_budget_usd       = 30
-egress_cidrs             = [] # e.g. ["203.0.113.10/32"] (NAT gateway EIP)

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stop the box only if: past boot grace, no SSM/SSH sessions, /data/claude quiet, load low.
+# Stop the box only if: past boot grace, no SSH/login sessions, /data/claude quiet, load low.
 set -euo pipefail
 
 N=$(sed -n 's/^IDLE_MINUTES=//p' /etc/devbox/env 2>/dev/null | tail -n1)
@@ -11,7 +11,6 @@ stay() { echo "idle-stop: staying up: $1"; exit 0; }
 
 up_min=$(awk '{print int($1/60)}' /proc/uptime)
 ((up_min >= N)) || stay "uptime ${up_min}m < ${N}m"
-pgrep -f ssm-session-worker >/dev/null && stay "active SSM session"
 [[ -n $(who) ]] && stay "login session"
 pgrep -f 'sshd: .*@' >/dev/null && stay "ssh session"
 [[ -n $(find /data/claude -mmin "-$N" -print -quit 2>/dev/null) ]] && stay "/data/claude modified in last ${N}m"

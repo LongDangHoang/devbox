@@ -12,17 +12,27 @@ data "aws_ami" "ubuntu" {
   }
 }
 
-data "aws_caller_identity" "current" {}
-
 locals {
-  tags      = { Project = var.name }
-  param_arn = "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter/devbox/${var.name}"
+  tags        = { Project = var.name }
+  scripts_dir = "${path.module}/../../../scripts"
+  # First boot only: install infra/scripts/* to /opt/devbox/scripts and enable setup-boot.service
+  # (which runs bootstrap.sh every boot). Later script changes reach boxes via `devbox sync`.
+  user_data = base64gzip(templatefile("${path.module}/user_data.sh.tftpl", {
+    files = { for f in fileset(local.scripts_dir, "*") : f => chomp(file("${local.scripts_dir}/${f}")) }
+  }))
 }
 
 resource "aws_security_group" "this" {
   name        = "devbox-${var.name}"
-  description = "devbox ${var.name}: no ingress"
+  description = "devbox ${var.name}: ssh from EICE only"
   vpc_id      = var.vpc_id
+
+  ingress {
+    from_port       = 22
+    to_port         = 22
+    protocol        = "tcp"
+    security_groups = [var.eice_sg_id]
+  }
 
   egress {
     from_port   = 443
@@ -41,67 +51,14 @@ resource "aws_security_group" "this" {
   tags = merge(local.tags, { Name = "devbox-${var.name}" })
 }
 
-resource "aws_iam_role" "this" {
-  name = "devbox-${var.name}"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Action    = "sts:AssumeRole"
-      Principal = { Service = "ec2.amazonaws.com" }
-    }]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "ssm" {
-  role       = aws_iam_role.this.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-}
-
-resource "aws_iam_role_policy" "this" {
-  name = "devbox-${var.name}"
-  role = aws_iam_role.this.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = concat([
-      {
-        Effect   = "Allow"
-        Action   = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"]
-        Resource = [local.param_arn, "${local.param_arn}/*"]
-      },
-      # AmazonSSMManagedInstanceCore allows ssm:GetParameter(s) on "*"; this caps reads at our own path.
-      # SecureString decrypt needs no IAM grant: the AWS-managed aws/ssm key policy already allows
-      # kms:Decrypt for account principals via SSM.
-      {
-        Effect      = "Deny"
-        Action      = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"]
-        NotResource = [local.param_arn, "${local.param_arn}/*"]
-      },
-      {
-        Effect   = "Allow"
-        Action   = "s3:GetObject"
-        Resource = "arn:aws:s3:::${var.scripts_bucket}/${var.scripts_prefix}/*"
-      },
-      {
-        Effect    = "Allow"
-        Action    = "s3:ListBucket"
-        Resource  = "arn:aws:s3:::${var.scripts_bucket}"
-        Condition = { StringLike = { "s3:prefix" = ["${var.scripts_prefix}/*", var.scripts_prefix] } }
-      },
-      ],
-      # Role credentials stolen off the box are useless elsewhere. The subnet CIDR covers calls
-      # through VPC endpoints (source = private IP). Skipped when egress_cidrs is empty.
-      length(var.egress_cidrs) == 0 ? [] : [{
-        Effect   = "Deny"
-        Action   = "*"
-        Resource = "*"
-        Condition = {
-          NotIpAddress = { "aws:SourceIp" = concat(var.egress_cidrs, [data.aws_subnet.this.cidr_block]) }
-          Bool         = { "aws:ViaAWSService" = "false" }
-        }
-      }],
-    )
-  })
+# The shared endpoint SG may reach this box on 22 (rule lives here so it comes and goes with the project).
+resource "aws_vpc_security_group_egress_rule" "eice" {
+  security_group_id            = var.eice_sg_id
+  referenced_security_group_id = aws_security_group.this.id
+  ip_protocol                  = "tcp"
+  from_port                    = 22
+  to_port                      = 22
+  tags                         = local.tags
 }
 
 # Needs the `Project` cost allocation tag activated once (Billing -> Cost allocation tags).
@@ -134,41 +91,8 @@ resource "aws_budgets_budget" "this" {
   }
 }
 
-resource "aws_iam_instance_profile" "this" {
-  name = "devbox-${var.name}"
-  role = aws_iam_role.this.name
-}
-
-# Write-only: the value never enters state, and later applies don't diff it, so
-# `devbox secrets` (put-parameter --overwrite) sticks. Bumping value_wo_version resets it to CHANGE_ME.
-resource "aws_ssm_parameter" "github_token" {
-  name             = "/devbox/${var.name}/github_token"
-  type             = "SecureString"
-  value_wo         = "CHANGE_ME"
-  value_wo_version = 1
-}
-
-resource "aws_ssm_parameter" "repo_url" {
-  name  = "/devbox/${var.name}/repo_url"
-  type  = "String"
-  value = "https://github.com/${var.repo}.git"
-}
-
-# Bootstrap mounts exactly this volume (by NVMe serial), never "some unformatted disk".
-resource "aws_ssm_parameter" "data_volume_id" {
-  name  = "/devbox/${var.name}/data_volume_id"
-  type  = "String"
-  value = aws_ebs_volume.data.id
-}
-
-resource "aws_ssm_parameter" "idle_minutes" {
-  name  = "/devbox/${var.name}/idle_minutes"
-  type  = "String"
-  value = tostring(var.idle_minutes)
-}
-
 # Data volume: depends only on AZ/size so instance changes never replace it.
-# final_snapshot leaves a snapshot behind when the project is retired.
+# final_snapshot leaves a snapshot behind (with these tags) when the project is retired.
 resource "aws_ebs_volume" "data" {
   availability_zone = data.aws_subnet.this.availability_zone
   size              = var.data_gb
@@ -181,19 +105,12 @@ resource "aws_launch_template" "this" {
   name          = "devbox-${var.name}"
   image_id      = data.aws_ami.ubuntu.id
   instance_type = var.instance_type
-  user_data = base64encode(templatefile("${path.module}/user_data.sh.tftpl", {
-    bucket = var.scripts_bucket
-    prefix = var.scripts_prefix
-    region = var.region
-  }))
+  user_data     = local.user_data
 
   instance_initiated_shutdown_behavior = "stop"
   vpc_security_group_ids               = [aws_security_group.this.id]
 
-  iam_instance_profile {
-    name = aws_iam_instance_profile.this.name
-  }
-
+  # No instance profile: the box has no AWS identity. IMDS (root-readable tags) holds no credentials.
   metadata_options {
     http_endpoint               = "enabled"
     http_tokens                 = "required"
@@ -209,21 +126,22 @@ resource "aws_launch_template" "this" {
     }
   }
 
-  tag_specifications {
-    resource_type = "instance"
-    tags          = merge(local.tags, { Name = "devbox-${var.name}" })
-  }
-
+  # default_tags don't reach tag_specifications, hence ManagedBy here.
   tag_specifications {
     resource_type = "volume"
-    tags          = merge(local.tags, { Name = "devbox-${var.name}-root" })
+    tags          = merge(local.tags, { Name = "devbox-${var.name}-root", ManagedBy = "devbox" })
   }
 
-  # A new Ubuntu AMI must not create a new LT version for every project on each apply.
-  # To roll a box onto a new AMI: terraform apply -replace=module.devbox["<name>"].aws_launch_template.this
+  # A new Ubuntu AMI or script edit must not create a new LT version for every project on each apply
+  # (that would break `devbox add`/`retire` scoped plans); scripts reach existing boxes via `devbox sync`.
+  # To roll a box onto a new AMI/user data: terraform apply -replace=module.devbox["<name>"].aws_launch_template.this
   # (then replace the instance as well; the data volume survives).
   lifecycle {
-    ignore_changes = [image_id]
+    ignore_changes = [image_id, user_data]
+    precondition {
+      condition     = length(local.user_data) <= 21848 # base64 of 16384 bytes, the EC2 user data limit
+      error_message = "Gzipped user data exceeds 16 KB; shrink infra/scripts."
+    }
   }
 }
 
@@ -234,6 +152,15 @@ resource "aws_instance" "this" {
     id      = aws_launch_template.this.id
     version = aws_launch_template.this.latest_version
   }
+
+  # Read by bootstrap.sh from IMDS (instance_metadata_tags). Set here rather than in the LT so changes
+  # update the running instance in place (the instance ignores LT changes, see below).
+  tags = merge(local.tags, {
+    Name         = "devbox-${var.name}"
+    Repo         = var.repo
+    IdleMinutes  = tostring(var.idle_minutes)
+    DataVolumeId = aws_ebs_volume.data.id
+  })
 
   # LT version bumps (instance type, SG, ...) would otherwise replace the box. Apply such
   # changes deliberately with: terraform apply -replace=module.devbox["<name>"].aws_instance.this
