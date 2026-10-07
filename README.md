@@ -17,7 +17,7 @@ Projects are one JSON file each in `infra/projects/<name>.json` (`{"repo": "<own
 
 **You do by hand, once per project:**
 
-1. Create the project repo from the Copier template.
+1. `devbox init-project` (creates the repo from the Copier template).
 2. `devbox add` (you confirm the plan).
 3. As the machine user: accept the repo invite, then create a classic token.
 4. `devbox secrets` (paste the tokens).
@@ -131,15 +131,11 @@ There's nothing to apply yet. The first `devbox add` creates the shared endpoint
 **1. Create the project repo from the template** (it must exist on GitHub before `devbox add`):
 
 ```bash
-# New project
-uvx copier copy gh:<owner>/devbox my-proj
-cd my-proj && git init && git add -A && git commit -m "Init from devbox template"
-gh repo create <owner>/my-proj --private --source . --push
-
-# Existing project (run inside the repo; review the diff before committing)
-uvx copier copy gh:<owner>/devbox .
-git add -A && git commit -m "Add devbox template" && git push
+devbox init-project my-proj                        # new: ./my-proj, private repo <owner>/my-proj, pushed
+devbox init-project my-proj --path ~/code/my-proj  # existing git repo: applies the template; review, commit, push yourself
 ```
+
+It runs Copier against this repo's GitHub copy (`gh:<owner>/devbox`), so push template changes here first. The project name, owner and devbox repo are filled in; Copier asks for the rest (package name, Python version, GPU, W&B), with defaults.
 
 **2. Create the box and the GitHub settings** (in this repo):
 

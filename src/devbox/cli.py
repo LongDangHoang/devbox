@@ -239,6 +239,33 @@ def cmd_add(a):
     print(f"Next: devbox secrets {a.name}, then devbox open {a.name}")
 
 
+def cmd_init_project(a):
+    """New dir: render the template, commit, create the private GitHub repo and push.
+    Existing git repo: render the template into it and leave the diff for you to review."""
+    project_file(a.name)  # same name rules as the template and `devbox add`
+    src = run("gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner", capture=True, cwd=ROOT)
+    owner, devbox_repo = src.split("/")
+    dest = Path(a.path or a.name).resolve()
+    existing = (dest / ".git").exists()
+    if dest.exists() and not existing and any(dest.iterdir()):
+        die(f"{dest} is not empty and not a git repo")
+    run(
+        "uvx", "copier", "copy", f"gh:{src}", str(dest), "-d", f"project_name={a.name}",
+        "-d", f"github_owner={owner}", "-d", f"devbox_repo={devbox_repo}",
+    )  # fmt: skip
+    if existing:
+        repo = run("gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner",
+                   capture=True, check=False, cwd=dest) or f"{owner}/<repo>"  # fmt: skip
+        print(f"Template applied to {dest}. Review `git diff`, then commit and push.")
+    else:
+        repo = f"{owner}/{a.name}"
+        run("git", "init", "-q", cwd=dest)
+        run("git", "add", "-A", cwd=dest)
+        run("git", "commit", "-qm", "Init from devbox template", cwd=dest)
+        run("gh", "repo", "create", repo, "--private", "--source", ".", "--push", cwd=dest)
+    print(f"Next: devbox add {a.name} {repo}")
+
+
 def cmd_auth(_):
     aws_env()  # MFA prompt if the cached session expired
     print(aws("sts", "get-caller-identity", "--output", "table"))
@@ -388,6 +415,14 @@ def main():
     )
     tfp.add_argument("args", nargs=argparse.REMAINDER, help="terraform arguments")
     cmd("ls", cmd_ls, "list projects with repo and box state", with_name=False)
+    init = cmd(
+        "init-project",
+        cmd_init_project,
+        "create a project repo from the template (or apply it to an existing repo)",
+    )
+    init.add_argument(
+        "--path", help="target dir (default: ./NAME); an existing git repo gets the template applied"
+    )
     add = cmd("add", cmd_add, "add a project: write its JSON, apply (scoped), commit")
     add.add_argument("repo", help="GitHub repo, owner/name (must exist)")
     add.add_argument("--type", help="instance type (default from tfvars)")

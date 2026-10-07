@@ -16,7 +16,8 @@ install -d -m 0755 /etc/devbox
 # which has passwordless sudo. The box has no AWS identity, so IMDS holds no credentials.
 rm -f /etc/sudoers.d/90-cloud-init-users
 for g in sudo lxd adm; do gpasswd -d "$U" "$g" >/dev/null 2>&1 || true; done
-id admin >/dev/null 2>&1 || useradd -m -s /bin/bash -G sudo admin   # no password (key-only login)
+# -N: Ubuntu already has a system group `admin`, so a same-name user group would fail (exit 9).
+id admin >/dev/null 2>&1 || useradd -m -N -s /bin/bash -G sudo admin   # no password (key-only login)
 t=$(mktemp)
 echo 'admin ALL=(ALL) NOPASSWD:ALL' > "$t"
 visudo -cqf "$t" && install -o root -g root -m 0440 "$t" /etc/sudoers.d/devbox-admin
