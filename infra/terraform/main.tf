@@ -44,6 +44,5 @@ module "github_project" {
   for_each = local.projects
 
   repo                  = each.value.repo
-  reviewer_username     = var.github_reviewer_username
   agent_github_username = var.agent_github_username
 }

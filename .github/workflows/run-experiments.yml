@@ -13,11 +13,13 @@
 # Private devbox repo: Settings > Actions > General > Access on the devbox repo
 # must allow workflows from your other repos to use it.
 #
-# Design: ONE job with two phases (smoke steps, then run steps) instead of two
-# jobs. Required reviewers on an Environment are enforced per job that
-# references it, so two `environment: modal` jobs = two approvals. One job =
-# one approval; a failing smoke step still stops the run steps.
-# https://docs.github.com/en/actions/managing-workflow-runs-and-deployments/managing-deployments/managing-environments-for-deployment
+# Gate: the job runs only when the repo owner triggered it (dispatch or re-run).
+# The agent's machine user has write access, so it can dispatch this workflow,
+# but `triggering_actor` is then the machine user and the job is skipped before
+# it ever gets the `modal` Environment. The agent can't change this check: it is
+# no collaborator on the devbox repo and its token lacks the `workflow` scope.
+# (Required reviewers would be the usual gate, but on private repos they need
+# GitHub Enterprise.) One job with two phases: a failing smoke step stops the runs.
 #
 # The checked-out code is agent-written. Hardening: the Modal client is installed
 # before checkout with --no-config (repo uv.toml/pyproject can't redirect the
@@ -49,6 +51,7 @@ permissions:
 
 jobs:
   experiments:
+    if: github.triggering_actor == github.repository_owner
     runs-on: ubuntu-latest
     environment: modal
     env:

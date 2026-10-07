@@ -7,18 +7,12 @@ data "github_repository" "this" {
   name = local.name
 }
 
-data "github_user" "reviewer" {
-  username = var.reviewer_username
-}
-
 resource "github_repository_environment" "modal" {
   repository  = local.name
   environment = "modal"
 
-  reviewers {
-    users = [data.github_user.reviewer.id]
-  }
-
+  # No required reviewers: on private repos they need GitHub Enterprise. The gate is the reusable
+  # workflow's job-level `if` (only the repo owner can trigger it) plus this branch policy.
   # Only protected branches (i.e. the default branch) can deploy.
   deployment_branch_policy {
     protected_branches     = true

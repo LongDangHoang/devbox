@@ -32,17 +32,32 @@
       "Condition": { "StringNotEquals": { "aws:ResourceTag/ManagedBy": "devbox" } }
     },
     {
-      "Sid": "DeletesOnlyDevboxTagged",
+      "Sid": "NoDeletesOutsideEc2",
       "Effect": "Deny",
       "Action": [
-        "s3:Delete*", "dynamodb:Delete*", "rds:Delete*", "lambda:Delete*", "logs:Delete*",
+        "dynamodb:Delete*", "rds:Delete*", "lambda:Delete*", "logs:Delete*",
         "ecr:Delete*", "ecs:Delete*", "eks:Delete*", "elasticloadbalancing:Delete*",
         "elasticfilesystem:Delete*", "cloudformation:Delete*", "route53:Delete*",
         "secretsmanager:Delete*", "sns:Delete*", "sqs:Delete*", "backup:Delete*",
         "cloudtrail:Delete*", "cloudtrail:StopLogging", "kms:ScheduleKeyDeletion", "kms:DisableKey"
       ],
-      "NotResource": ["arn:aws:s3:::<state-bucket>/<state-key>*"],
-      "Condition": { "StringNotEquals": { "aws:ResourceTag/ManagedBy": "devbox" } }
+      "Resource": "*"
+    },
+    {
+      "Sid": "S3WritesOnlyStateFile",
+      "Effect": "Deny",
+      "Action": ["s3:Put*", "s3:Delete*", "s3:Replicate*", "s3:RestoreObject"],
+      "NotResource": ["arn:aws:s3:::<state-bucket>/<state-key>*"]
+    },
+    {
+      "Sid": "Ec2NoTaggingIntoDevboxAfterCreate",
+      "Effect": "Deny",
+      "Action": "ec2:CreateTags",
+      "Resource": "*",
+      "Condition": {
+        "ForAnyValue:StringEquals": { "aws:TagKeys": ["ManagedBy"] },
+        "Null": { "ec2:CreateAction": "true" }
+      }
     },
     {
       "Sid": "BudgetsOnlyDevbox",

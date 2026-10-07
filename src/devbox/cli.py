@@ -76,7 +76,7 @@ def tf(*args: str, **kw):
     # The GitHub provider authenticates as you via your `gh` login; the token lives only in
     # this child's environment (never your shell, state, or a box).
     env = aws_env().copy()
-    env.setdefault("GITHUB_TOKEN", run("gh", "auth", "token", capture=True))
+    env["GITHUB_TOKEN"] = run("gh", "auth", "token", capture=True)
     return run("terraform", f"-chdir={TF_DIR}", *args, env=env, **kw)
 
 

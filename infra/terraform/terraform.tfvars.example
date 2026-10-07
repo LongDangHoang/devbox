@@ -1,11 +1,10 @@
-region                   = "<region>" # e.g. ap-southeast-2; must match backend.hcl and infra/iam/deployer-boundary.json
+region                   = "<region>" # e.g. ap-southeast-2; must match backend.hcl (state bucket in this region) and infra/iam/deployer-boundary.json
 vpc_id                   = "vpc-xxxxxxxx"
-subnet_id                = "subnet-xxxxxxxx"
+subnet_id                = "subnet-xxxxxxxx" # needs outbound internet (public subnet with auto-assign IPv4, or NAT)
 default_instance_type    = "m7g.xlarge"
 default_data_gb          = 50
 idle_minutes             = 30
 github_owner             = "OWNER"
-github_reviewer_username = "USERNAME"
 agent_github_username    = "MACHINE_USER"
 budget_email             = "you@example.com"
 monthly_budget_usd       = 30

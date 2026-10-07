@@ -29,10 +29,6 @@ variable "github_owner" {
   type = string
 }
 
-variable "github_reviewer_username" {
-  type = string
-}
-
 # Machine-user account the boxes push as (its token goes onto the box via `devbox secrets`).
 variable "agent_github_username" {
   type = string
