@@ -61,6 +61,7 @@ uv tool install -e .   # puts `devbox` on PATH; `devbox --help` lists commands
 
    `AccessDenied` on `devbox auth`, with the caller shown as `user/devbox-operator`:
    - **The user lacks `sts:AssumeRole` on the role:** the bootstrap apply didn't run, or the user was made by hand (see step 1).
+   - **An MFA condition on the user's own policy:** don't put `aws:MultiFactorAuthPresent` there. `AssumeRole` is signed with the long-term key, so that condition key is absent and the Allow never matches. MFA is enforced by the role's trust policy, the only place it works for this call.
    - **No MFA in the request:** the role's trust policy requires MFA. Check that `mfa_serial` in `~/.aws/config` is the device ARN assigned to `devbox-operator`.
    - **A stale or mistyped `role_arn`:** compare it with `terraform -chdir=infra/bootstrap output deployer_role_arn`.
 
