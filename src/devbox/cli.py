@@ -247,8 +247,15 @@ def cmd_init_project(a):
     owner, devbox_repo = src.split("/")
     dest = Path(a.path or a.name).resolve()
     existing = (dest / ".git").exists()
+    if (dest / ".copier-answers.yml").exists():
+        die(f"{dest} already uses the template; update it with `uvx copier update` there")
     if dest.exists() and not existing and any(dest.iterdir()):
         die(f"{dest} is not empty and not a git repo")
+    if (
+        not existing
+        and subprocess.run(["gh", "repo", "view", f"{owner}/{a.name}"], capture_output=True).returncode == 0
+    ):
+        die(f"{owner}/{a.name} already exists on GitHub; clone it and rerun with --path <clone>")
     run(
         "uvx", "copier", "copy", f"gh:{src}", str(dest), "-d", f"project_name={a.name}",
         "-d", f"github_owner={owner}", "-d", f"devbox_repo={devbox_repo}",
@@ -262,7 +269,8 @@ def cmd_init_project(a):
         run("git", "init", "-q", cwd=dest)
         run("git", "add", "-A", cwd=dest)
         run("git", "commit", "-qm", "Init from devbox template", cwd=dest)
-        run("gh", "repo", "create", repo, "--private", "--source", ".", "--push", cwd=dest)
+        vis = "--public" if a.public else "--private"
+        run("gh", "repo", "create", repo, vis, "--source", ".", "--push", cwd=dest)
     print(f"Next: devbox add {a.name} {repo}")
 
 
@@ -422,6 +430,9 @@ def main():
     )
     init.add_argument(
         "--path", help="target dir (default: ./NAME); an existing git repo gets the template applied"
+    )
+    init.add_argument(
+        "--public", action="store_true", help="create the GitHub repo public (default: private)"
     )
     add = cmd("add", cmd_add, "add a project: write its JSON, apply (scoped), commit")
     add.add_argument("repo", help="GitHub repo, owner/name (must exist)")
