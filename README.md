@@ -45,7 +45,7 @@ gh auth login          # devbox hands this login to Terraform (never exported, n
 
 - **Plan:** project repos are private, so your account needs **GitHub Pro** (or higher) for Environments, Environment secrets and branch protection. On GitHub Free, make the project repos public instead.
 - **This repo on GitHub** at `<owner>/devbox`. Copier templates from it and project repos call its workflow at `@main`, so push changes here before using them.
-- **If this repo is private:** Settings -> Actions -> General -> Access -> "Accessible from repositories owned by the user".
+- **Visibility:** make this repo public (any repo can then call its workflow; it runs with the caller's secrets, never this repo's). A private one only works with private project repos: Settings -> Actions -> General -> Access -> "Accessible from repositories owned by the user".
 - **Machine user:** create a second GitHub account for the agent (GitHub allows one free machine account per person). Its username goes into `agent_github_username`. The agent pushes and opens PRs as this account, so it can't approve its own PRs or trigger GPU runs.
 
 ### 3. AWS prerequisites
