@@ -2,7 +2,10 @@
 
 - You cannot run Modal jobs or view their outputs. Only the human triggers GPU runs.
 - Run `make check CONFIGS=experiments/<x>.yml` (default: all configs). Only propose a run when it passes on the exact commit.
-  Then push the branch and reply: `run <configs> @ <sha>`, what changed, and what to look for in the results.
+  Then push the branch and reply: `run <jobs> @ <sha>`, what changed, and what to look for in the results.
+- A run is a job file in `jobs/` (see `jobs/example.yml`): `entrypoint` (`path` or `path::function`), `args` passed as
+  `--key value` (bools become `--key`/`--no-key`), `detach`, and an optional `smoke` override run first.
+  CPU-only work: a Modal function without `gpu=`, and its own `@app.local_entrypoint()`.
 - The pre-push hook (`make setup` installs it) runs `make check` as a convenience, not a gate; the human reviews every diff.
 - You cannot push changes under `.github/workflows/` (the token lacks the `workflow` scope) or merge to the default branch (PRs need the human's approval).
 - `uv.lock` must be committed (`make setup` creates it if missing); Modal builds its image from it.

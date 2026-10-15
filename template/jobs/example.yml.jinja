@@ -1,0 +1,7 @@
+# Launched by the run-experiments workflow; see the devbox repo's workflow header for the format.
+entrypoint: src/{{ package_name }}/modal_app.py  # or src/.../file.py::function
+detach: true
+args:  # --key value; true -> --key, false -> --no-key
+  config: experiments/example.yml
+smoke:  # merged over args and run blocking first; delete to skip
+  smoke: true

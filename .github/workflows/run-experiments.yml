@@ -1,4 +1,13 @@
-# Reusable workflow: GPU smoke on Modal, then detached full runs.
+# Reusable workflow: optional smoke runs on Modal, then the real runs.
+#
+# Each job is a YAML file under jobs/ in the caller repo, read at the given SHA:
+#
+#   entrypoint: src/<pkg>/modal_app.py   # or path::function, path::Class.method
+#   detach: true                         # modal run --detach (default true; false = blocking)
+#   args:                                # --key value; true -> --key, false -> --no-key; _ -> -
+#     config: experiments/a.yml
+#   smoke:                               # optional: overrides merged over args, run blocking
+#     smoke: true                        # first (5 min cap); omit to skip
 #
 # Caller usage (needs `secrets: inherit` so the caller's `modal` Environment
 # secrets MODAL_TOKEN_ID / MODAL_TOKEN_SECRET are available; W&B is a Modal-side
@@ -7,7 +16,7 @@
 #   jobs:
 #     run:
 #       uses: <owner>/devbox/.github/workflows/run-experiments.yml@main
-#       with: { sha: ..., configs: "a.yml,b.yml", entrypoint: src/<pkg>/modal_app.py }
+#       with: { sha: ..., jobs: "a.yml,b.yml" }
 #       secrets: inherit
 #
 # Private devbox repo: Settings > Actions > General > Access on the devbox repo
@@ -19,13 +28,15 @@
 # it ever gets the `modal` Environment. The agent can't change this check: it is
 # no collaborator on the devbox repo and its token lacks the `workflow` scope.
 # (Required reviewers would be the usual gate, but on private repos they need
-# GitHub Enterprise.) One job with two phases: a failing smoke step stops the runs.
+# GitHub Enterprise.) One job with two phases: any failing smoke stops all runs.
 #
 # The checked-out code is agent-written. Hardening: the Modal client is installed
 # before checkout with --no-config (repo uv.toml/pyproject can't redirect the
 # index), no uv cache, no persisted git token, and the Modal token is only in the
-# env of the two `modal run` steps. `modal run` imports the entrypoint, so the
-# reviewed code still runs with the Modal token: review the whole diff.
+# env of the `modal run` step. Job files are parsed by the inline script under
+# `python -I` and become argv lists, never shell text. `modal run` imports the
+# entrypoint, so the reviewed code still runs with the Modal token: review the
+# whole diff, including jobs/.
 # (step-security/harden-runner egress blocking needs a paid plan for private repos.)
 name: run-experiments
 
@@ -35,13 +46,10 @@ on:
       sha:
         type: string
         required: true
-      configs:
+      jobs:
         type: string
         required: true
-        description: Comma-separated config paths relative to experiments/
-      entrypoint:
-        type: string
-        default: src/app/modal_app.py
+        description: Comma-separated job files relative to jobs/
       skip_smoke:
         type: boolean
         default: false
@@ -57,14 +65,13 @@ jobs:
     env:
       # inputs go through env, never interpolated into run: scripts
       IN_SHA: ${{ inputs.sha }}
-      IN_CONFIGS: ${{ inputs.configs }}
-      IN_ENTRYPOINT: ${{ inputs.entrypoint }}
+      IN_JOBS: ${{ inputs.jobs }}
+      IN_SKIP_SMOKE: ${{ inputs.skip_smoke }}
     steps:
       - name: Validate inputs
         run: |
           [[ "$IN_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "sha must be a full 40-char lowercase hex SHA"; exit 1; }
-          [[ "$IN_ENTRYPOINT" =~ ^[A-Za-z0-9_./-]+$ && "$IN_ENTRYPOINT" != /* && "$IN_ENTRYPOINT" != *..* ]] || { echo "bad entrypoint"; exit 1; }
-          [[ "$IN_CONFIGS" =~ ^[A-Za-z0-9_./,-]+$ && "$IN_CONFIGS" != *..* ]] || { echo "bad configs"; exit 1; }
+          [[ "$IN_JOBS" =~ ^[A-Za-z0-9_./,-]+$ && "$IN_JOBS" != *..* ]] || { echo "bad jobs"; exit 1; }
 
       - uses: astral-sh/setup-uv@v5
         with:
@@ -82,33 +89,74 @@ jobs:
       - name: Verify exact SHA
         run: '[ "$(git rev-parse HEAD)" = "$IN_SHA" ] || { echo "HEAD != $IN_SHA"; exit 1; }'
 
-      - name: "smoke: GPU smoke runs"
-        if: ${{ !inputs.skip_smoke }}
-        timeout-minutes: 30
+      - name: Smoke, then run
+        timeout-minutes: 60
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        # -I: the repo checkout (cwd) is not on sys.path, so a planted yaml.py can't load
         run: |
-          set -euo pipefail
-          IFS=',' read -ra CFGS <<< "$IN_CONFIGS"
-          for c in "${CFGS[@]}"; do
-            c="experiments/${c#experiments/}"
-            echo "::group::smoke $c"
-            timeout 5m modal run "$IN_ENTRYPOINT" --config "$c" --smoke
-            echo "::endgroup::"
-          done
+          "$(uv tool dir)/modal/bin/python" -I - <<'PY'
+          import os, re, subprocess, sys
+          import yaml
 
-      - name: "run: launch detached runs"
-        env:
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-        run: |
-          set -euo pipefail
-          IFS=',' read -ra CFGS <<< "$IN_CONFIGS"
-          echo "### Modal runs @ ${IN_SHA}" >> "$GITHUB_STEP_SUMMARY"
-          for c in "${CFGS[@]}"; do
-            c="experiments/${c#experiments/}"
-            modal run --detach "$IN_ENTRYPOINT" --config "$c" 2>&1 | tee out.log
-            url=$(grep -o 'https://modal.com/[^ ]*' out.log | head -n1 || true)
-            echo "- ${c#experiments/}: ${url:-no URL found}" >> "$GITHUB_STEP_SUMMARY"
-          done
+          ENTRY = re.compile(r"[A-Za-z0-9_./-]+(::[A-Za-z_][A-Za-z0-9_.]*)?")  # path[::fn | ::Cls.method]
+          KEY = re.compile(r"[A-Za-z][A-Za-z0-9-]*")
+          FIELDS = {"entrypoint", "detach", "args", "smoke"}
+
+
+          def argv(name, ep, args, detach):
+              if not isinstance(ep, str) or not ENTRY.fullmatch(ep) or ".." in ep or ep.startswith("/"):
+                  sys.exit(f"{name}: bad entrypoint {ep!r}")
+              if not isinstance(args, dict):
+                  sys.exit(f"{name}: args must be a mapping")
+              out = ["modal", "run", *(["--detach"] if detach else []), ep]
+              for k, v in args.items():
+                  k = str(k).replace("_", "-")  # same mapping modal applies to param names
+                  if not KEY.fullmatch(k) or isinstance(v, (dict, list)):
+                      sys.exit(f"{name}: bad arg {k!r}: {v!r}")
+                  if v is True:
+                      out.append(f"--{k}")
+                  elif v is False:
+                      out.append(f"--no-{k}")
+                  elif v is not None:
+                      out += [f"--{k}", str(v)]
+              return out
+
+
+          # build and check every command before anything runs
+          smokes, runs = [], []
+          for n in filter(None, os.environ["IN_JOBS"].split(",")):
+              n = n.removeprefix("jobs/")
+              j = yaml.safe_load(open(f"jobs/{n}"))
+              if not isinstance(j, dict) or "entrypoint" not in j or set(j) - FIELDS:
+                  sys.exit(f"{n}: needs entrypoint; allowed keys {sorted(FIELDS)}")
+              args = j.get("args") or {}
+              runs.append((n, argv(n, j["entrypoint"], args, j.get("detach", True) is not False)))
+              if j.get("smoke") is not None and os.environ["IN_SKIP_SMOKE"] != "true":
+                  if not isinstance(j["smoke"], dict):
+                      sys.exit(f"{n}: smoke must be a mapping")
+                  smokes.append((n, argv(n, j["entrypoint"], {**args, **j["smoke"]}, False)))
+
+          # every smoke passes before any real run starts
+          for n, cmd in smokes:
+              print(f"::group::smoke {n}: {' '.join(cmd)}", flush=True)
+              subprocess.run(cmd, check=True, timeout=300)
+              print("::endgroup::", flush=True)
+
+          summary = open(os.environ["GITHUB_STEP_SUMMARY"], "a")
+          summary.write(f"### Modal runs @ {os.environ['IN_SHA']}\n")
+          for n, cmd in runs:
+              print(f"::group::run {n}: {' '.join(cmd)}", flush=True)
+              p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+              log = ""
+              for line in p.stdout:
+                  print(line, end="", flush=True)
+                  log += line
+              if p.wait():
+                  sys.exit(f"{n}: modal run exited {p.returncode}")
+              url = re.search(r"https://modal\.com/\S+", log)
+              summary.write(f"- {n}: {url[0] if url else 'no URL found'}\n")
+              summary.flush()
+              print("::endgroup::", flush=True)
+          PY

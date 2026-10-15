@@ -179,7 +179,7 @@ Remote Control runs headless: it exits with "Workspace not trusted" until you ac
 
 `devbox start my-proj` (or a phone shortcut), then work in the Claude app or with `devbox open my-proj`. The box stops itself when idle. Also: `devbox stop|status my-proj`, `devbox ls`.
 
-**GPU runs:** the agent replies `run <configs> @ <sha>`. Review that commit's whole diff (including `pyproject.toml` and `uv.lock`), then in the project repo go to Actions -> run-experiments -> Run workflow with the SHA and configs. The job runs only when you (the repo owner) trigger it. If the machine user dispatches or re-runs it, the job is skipped.
+**Modal runs:** each run is a job file in the project's `jobs/` (entrypoint, args, detach, optional smoke; format in the header of `.github/workflows/run-experiments.yml`). The agent replies `run <jobs> @ <sha>`. Review that commit's whole diff (including `jobs/`, `pyproject.toml` and `uv.lock`), then in the project repo go to Actions -> run-experiments -> Run workflow with the SHA and job files. The job runs only when you (the repo owner) trigger it. If the machine user dispatches or re-runs it, the job is skipped.
 
 **Admin on the box:** `devbox open` logs in as `admin` (passwordless sudo) and switches to `ubuntu` (no sudo). `exit` drops you back to `admin`. Never run repo code (`make check`, `uv run`, git hooks) as `admin`: that would run agent-written code with sudo.
 
@@ -256,4 +256,4 @@ uvx --from shellcheck-py shellcheck infra/scripts/*.sh
 - [ ] A `run-experiments` dispatch by the machine user is skipped; one by you runs.
 - [ ] `copier copy` into an empty dir and into an existing repo both work; `copier update` applies a template change.
 - [ ] In a freshly templated project, `make check` passes on the box in a few minutes, and the pre-push hook blocks a push when it fails.
-- [ ] Triggering the caller workflow with a SHA and configs runs the GPU smoke stage first; a failing smoke stops the full runs; on success detached Modal runs launch and their links appear in the job summary.
+- [ ] Triggering the caller workflow with a SHA and job files runs every job's smoke first; a failing smoke stops all runs; on success the runs launch and their Modal links appear in the job summary.
