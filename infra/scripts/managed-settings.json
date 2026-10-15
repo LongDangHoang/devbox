@@ -47,7 +47,11 @@
         "files.pythonhosted.org",
         "download.pytorch.org",
         "astral.sh",
-        "*.astral.sh"
+        "*.astral.sh",
+        "huggingface.co",
+        "*.huggingface.co",
+        "hf.co",
+        "*.hf.co"
       ],
       "deniedDomains": ["169.254.169.254"]
     }

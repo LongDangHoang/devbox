@@ -42,9 +42,9 @@ mountpoint -q /data || mount "$dev" /data
 chown "$U:$U" /data   # fs root of our volume; everything below is created by ubuntu
 as_u mkdir -p /data/cache /data/claude
 
-# --- 4. packages (bwrap+socat: Claude Code sandbox; Node for project tooling)
+# --- 4. packages (bwrap+socat: Claude Code sandbox; Node for project tooling; gh root-owned like claude)
 apt-get update -qq
-apt-get install -y -qq git curl ca-certificates build-essential python3 nodejs bubblewrap socat ec2-instance-connect
+apt-get install -y -qq git curl ca-certificates build-essential python3 nodejs bubblewrap socat ec2-instance-connect gh
 
 # Ubuntu 24.04 blocks bwrap userns by default; allow it (per sandboxing docs).
 if [[ $(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0) == 1 && ! -f /etc/apparmor.d/bwrap ]]; then
@@ -97,6 +97,9 @@ if [[ -s $TOKEN_FILE ]]; then
   printf 'https://x-access-token:%s@github.com\n' "$(< "$TOKEN_FILE")" |
     as_u bash -euc 'umask 077; rm -f /data/git-credentials; cat > /data/git-credentials'
   as_u git config --global credential.helper "store --file /data/git-credentials"
+  # gh for PRs/CI logs, so the agent never handles the token itself (no keyring: plain hosts.yml).
+  # Needs the read:org scope; non-fatal so a GitHub hiccup doesn't block Remote Control.
+  as_u gh auth login --hostname github.com --with-token < "$TOKEN_FILE" || echo "gh login failed (token lacks read:org?)" >&2
 else
   echo "no $TOKEN_FILE yet (run: devbox secrets $NAME); skipping git credentials and clone" >&2
 fi

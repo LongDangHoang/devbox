@@ -27,7 +27,7 @@ Projects are one JSON file each in `infra/projects/<name>.json` (`{"repo": "<own
 
 - **Per project (Terraform):** the box (launch template, instance, security group, root volume), a persistent data volume that leaves a final snapshot on retire, an AWS Budget, and on GitHub: the `modal` Environment (default branch only), placeholder Modal secrets, the machine-user collaborator invite, and branch protection.
 - **Shared (Terraform, created by the first `devbox add`):** the EC2 Instance Connect Endpoint and its security group.
-- **On every boot (`bootstrap.sh`):** takes sudo away from `ubuntu`, creates `admin`, mounts `/data`, installs packages, writes the Claude Code managed settings (sandbox and egress allowlist), sets up git credentials from the token, installs or updates Claude Code, clones the repo, and starts Remote Control and the idle-stop timer.
+- **On every boot (`bootstrap.sh`):** takes sudo away from `ubuntu`, creates `admin`, mounts `/data`, installs packages, writes the Claude Code managed settings (sandbox and egress allowlist), sets up git credentials and `gh` login from the token, installs or updates Claude Code, clones the repo, and starts Remote Control and the idle-stop timer.
 - **`devbox` CLI:** scoped plan, confirm and apply on add/retire; commits the project JSON; carries secrets over stdin only; starts and stops boxes; pushes script changes (`devbox sync`); prints the final snapshot on retire.
 
 ## One-time setup
@@ -148,7 +148,7 @@ git push                             # devbox add committed infra/projects/my-pr
 
 **3. As the machine user** (log in to GitHub as that account):
 - Accept the invite at `https://github.com/<owner>/my-proj/invitations`.
-- Create a **classic** token (Settings -> Developer settings -> Tokens (classic)) with only the `repo` scope and an expiry.
+- Create a **classic** token (Settings -> Developer settings -> Tokens (classic)) with only the `repo` and `read:org` scopes (`gh` refuses to log in without `read:org`) and an expiry.
 
 Why classic: fine-grained tokens can't be used on repos where the user is only a collaborator ([docs](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#fine-grained-personal-access-tokens-limitations)). Without the `workflow` scope, pushes that add or change `.github/workflows/` files are rejected ([scopes](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps#available-scopes)).
 
@@ -158,7 +158,7 @@ Why classic: fine-grained tokens can't be used on repos where the user is only a
 devbox secrets my-proj
 ```
 
-It prompts with hidden input. The machine-user token goes to the box (`/etc/devbox/github_token`, root-only), and the box then sets up git credentials and clones the repo. `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` go to the repo's `modal` Environment. Empty input skips a value, so you can rerun this any time (e.g. to rotate the token). If the clone fails, check that the invite was accepted, then run `devbox secrets my-proj` again with the token.
+It prompts with hidden input. The machine-user token goes to the box (`/etc/devbox/github_token`, root-only), and the box then sets up git credentials, logs in `gh` and clones the repo. `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` go to the repo's `modal` Environment. Empty input skips a value, so you can rerun this any time (e.g. to rotate the token). If the clone fails, check that the invite was accepted, then run `devbox secrets my-proj` again with the token.
 
 **5. Log in to Claude on the box:**
 
@@ -166,11 +166,12 @@ It prompts with hidden input. The machine-user token goes to the box (`/etc/devb
 devbox open my-proj   # session opens as ubuntu
 claude auth login     # the claude.ai login, not setup-token
 cd /data/repo && claude   # accept "Trust this folder?", then /exit
+claude remote-control     # answer y to "Enable Remote Control?", then Ctrl+C
 exit                      # back to admin (has sudo)
 sudo systemctl restart claude-rc
 ```
 
-Remote Control runs headless and exits with "Workspace not trusted" until you accept the trust prompt. From now on it comes up on every boot, and the session appears in the Claude app as `my-proj`.
+Remote Control runs headless: it exits with "Workspace not trusted" until you accept the trust prompt, and hangs silently on "Enable Remote Control? (y/n)" until you answer it once interactively. From now on it comes up on every boot, and the session appears in the Claude app as `my-proj`.
 
 **6. First project only:** in Billing -> Cost allocation tags, activate `Project`. It appears about a day after the first tagged resource exists. Until then the per-project budgets see no costs.
 
