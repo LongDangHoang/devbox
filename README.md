@@ -27,7 +27,7 @@ Projects are one JSON file each in `infra/projects/<name>.json` (`{"repo": "<own
 
 - **Per project (Terraform):** the box (launch template, instance, security group, root volume), a persistent data volume that leaves a final snapshot on retire, an AWS Budget, and on GitHub: the `modal` Environment (default branch only), placeholder Modal secrets, the machine-user collaborator invite, and branch protection.
 - **Shared (Terraform, created by the first `devbox add`):** the EC2 Instance Connect Endpoint and its security group.
-- **On every boot (`bootstrap.sh`):** takes sudo away from `ubuntu`, creates `admin`, mounts `/data`, installs packages, writes the Claude Code managed settings (sandbox and egress allowlist), sets up git credentials and `gh` login from the token, installs or updates Claude Code, clones the repo, and starts Remote Control and the idle-stop timer.
+- **On every boot (`bootstrap.sh`):** takes sudo away from `ubuntu`, creates `admin`, mounts `/data`, prunes session worktrees untouched for 7 days (`/data/shared` is the cross-session disk), installs packages, writes the Claude Code managed settings (sandbox and egress allowlist), sets up git credentials and `gh` login from the token, installs or updates Claude Code, clones the repo, and starts Remote Control and the idle-stop timer.
 - **`devbox` CLI:** scoped plan, confirm and apply on add/retire; commits the project JSON; carries secrets over stdin only; starts and stops boxes; pushes script changes (`devbox sync`); prints the final snapshot on retire.
 
 ## One-time setup

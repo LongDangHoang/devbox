@@ -1,5 +1,7 @@
 # {{ project_name }} agent conventions
 
+- Your worktree is scratch: it is deleted 7 days after its last change. Put anything another session should reuse
+  (datasets, results, checkpoints, notes) in `$DEVBOX_SHARED/<topic>/` (`/data/shared`, shared by all sessions on this box).
 - You cannot run Modal jobs or view their outputs. Only the human triggers GPU runs.
 - Run `make check CONFIGS=experiments/<x>.yml` (default: all configs). Only propose a run when it passes on the exact commit.
   Then push the branch and reply: `run <jobs> @ <sha>`, what changed, and what to look for in the results.

@@ -40,7 +40,7 @@ blkid "$dev" >/dev/null || mkfs.ext4 -L devbox-data "$dev"   # format only if no
 mkdir -p /data
 mountpoint -q /data || mount "$dev" /data
 chown "$U:$U" /data   # fs root of our volume; everything below is created by ubuntu
-as_u mkdir -p /data/cache /data/claude
+as_u mkdir -p /data/cache /data/claude /data/shared
 
 # --- 4. packages (bwrap+socat: Claude Code sandbox; Node for project tooling; gh root-owned like claude)
 apt-get update -qq
@@ -69,12 +69,14 @@ IDLE_MINUTES=$IDLE
 EOV
 cat > /etc/devbox/rc.env <<EOV
 DEVBOX_PROJECT=$NAME
+DEVBOX_SHARED=/data/shared
 PATH=$H/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 XDG_CACHE_HOME=/data/cache
 UV_CACHE_DIR=/data/cache/uv
 UV_PYTHON_INSTALL_DIR=/data/cache/uv-python
 EOV
 cat > /etc/profile.d/devbox.sh <<'EOV'
+export DEVBOX_SHARED=/data/shared
 export XDG_CACHE_HOME=/data/cache
 export UV_CACHE_DIR=/data/cache/uv
 export UV_PYTHON_INSTALL_DIR=/data/cache/uv-python
@@ -119,6 +121,18 @@ rm -f "$H/.local/bin/claude" # older ubuntu-owned install would shadow it on PAT
 # --- 9. repo (no dependency install here: that would run agent-controlled code unsandboxed)
 if [[ ! -d /data/repo/.git && -s $TOKEN_FILE ]]; then
   as_u git clone "https://github.com/$REPO.git" /data/repo || echo "clone failed (token set / invite accepted?)" >&2
+fi
+# Prune session worktrees untouched for 7 days (sandboxed sessions can't delete siblings). Runs before
+# claude-rc starts, so no live session. Branches stay; only uncommitted work in stale worktrees is lost
+# (keepers belong in /data/shared). mtime only: never run git inside a worktree, since its .git file
+# is agent-controlled and could point at a gitdir whose config executes code outside the sandbox.
+# ponytail: fixed 7 days, make it a project setting if a project needs longer.
+if [[ -d /data/repo/.git ]]; then
+  as_u bash -c '
+    for wt in /data/repo/.claude/worktrees/*/; do
+      [[ -d $wt && -z $(find "$wt" -mtime -7 -print -quit) ]] && rm -rf --one-file-system "$wt"
+    done
+    git -C /data/repo worktree prune' || echo "worktree prune failed" >&2
 fi
 
 # --- 10. services

@@ -29,7 +29,7 @@
     "enableWeakerNetworkIsolation": false,
     "filesystem": {
       "allowManagedReadPathsOnly": true,
-      "allowWrite": ["/data/cache"],
+      "allowWrite": ["/data/cache", "/data/shared"],
       "denyRead": [
         "/etc/devbox/env",
         "/data/claude/.credentials.json",
