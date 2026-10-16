@@ -5,7 +5,8 @@ from pathlib import Path
 
 import modal
 
-ROOT = Path(__file__).resolve().parents[2]
+# In the container Modal mounts this file alone at /root/modal_app.py, so parents[2] does not exist there
+ROOT = Path(__file__).resolve().parents[2] if modal.is_local() else Path("/repo")
 sys.path.insert(0, str(ROOT / "src"))  # lets `modal run <path>` import the package without install
 
 from {{ package_name }}.config import GPUS, Config, load
