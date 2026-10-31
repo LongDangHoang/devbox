@@ -109,7 +109,9 @@ fi
 # --- 8. tools. Claude Code is installed by root and copied root-owned to /usr/local/bin,
 # so nothing running as ubuntu can swap the binary claude-rc executes. Updated each boot
 # (the in-app autoupdater is off via managed settings).
-[[ -x $H/.local/bin/uv ]] || as_u bash -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'
+# uv: reinstalled each boot so security fixes land. Fresh installer rather than `uv self update`,
+# which would run the ubuntu-owned binary outside the sandbox.
+as_u bash -o pipefail -c 'curl -LsSf https://astral.sh/uv/install.sh | sh' || echo "uv install failed; keeping current version" >&2
 if [[ -x /root/.local/bin/claude ]]; then
   /root/.local/bin/claude update || echo "claude update failed; keeping current version" >&2
 else
