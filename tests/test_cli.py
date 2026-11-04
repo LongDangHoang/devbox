@@ -26,3 +26,16 @@ def test_scoped_plan_check():
     ]
     n, bad = plan_violations(plan, "a", "delete")
     assert n == 2 and len(bad) == 4
+
+
+def test_scp_paths():
+    import pytest
+
+    from devbox.cli import scp_paths
+
+    h = "ubuntu@i-1"
+    assert scp_paths(["a", "b", ":/d"], h) == ["a", "b", "ubuntu@i-1:/d"]
+    assert scp_paths([":/x", ":/y", "."], h) == ["ubuntu@i-1:/x", "ubuntu@i-1:/y", "."]
+    for bad in (["a", "b"], [":/x", ":/y"], [":/x", "a", "."], ["a"]):
+        with pytest.raises(SystemExit):
+            scp_paths(bad, h)

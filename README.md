@@ -179,6 +179,8 @@ Remote Control runs headless: it exits with "Workspace not trusted" until you ac
 
 `devbox start my-proj` (or a phone shortcut), then work in the Claude app or with `devbox open my-proj`. The box stops itself when idle. Also: `devbox stop|status my-proj`, `devbox ls`.
 
+**Copying files:** `devbox cp my-proj ./data :/data/shared/` (to the box) or `devbox cp my-proj :/data/shared/out .` (from it). `:` marks the box side; it runs `scp -r` as `ubuntu`. Use `/data/shared` so worktree pruning never touches it, and never copy secrets in (the agent can read all of `/data`).
+
 **Modal runs:** each run is a job file in the project's `jobs/` (entrypoint, args, detach, optional smoke; format in the header of `.github/workflows/run-experiments.yml`). The agent replies `run <jobs> @ <sha>`. Review that commit's whole diff (including `jobs/`, `pyproject.toml` and `uv.lock`), then in the project repo go to Actions -> run-experiments -> Run workflow with the SHA and job files. The job runs only when you (the repo owner) trigger it. If the machine user dispatches or re-runs it, the job is skipped.
 
 **Admin on the box:** `devbox open` logs in as `admin` (passwordless sudo) and switches to `ubuntu` (no sudo). `exit` drops you back to `admin`. Never run repo code (`make check`, `uv run`, git hooks) as `admin`: that would run agent-written code with sudo.

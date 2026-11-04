@@ -1,6 +1,7 @@
 """devbox: manage per-project Claude Code dev boxes (wraps terraform, aws, ssh and gh)."""
 
 import argparse
+import contextlib
 import functools
 import getpass
 import io
@@ -163,10 +164,10 @@ def git_commit(path: Path, msg: str):
     run("git", "commit", "-m", msg, "--", rel, cwd=ROOT)
 
 
-def ssh(iid: str, remote_cmd: str | None = None, input=None, os_user: str = "admin") -> int:
-    """SSH via the EC2 Instance Connect Endpoint with a throwaway key (valid 60s on the box).
-    `aws ec2-instance-connect ssh` can't run a remote command, hence plain ssh + open-tunnel.
-    Interactive (with a tty) when input is None; otherwise input is fed to remote_cmd's stdin."""
+@contextlib.contextmanager
+def ssh_opts(iid: str, os_user: str):
+    """Yield ssh/scp options for the EC2 Instance Connect Endpoint with a throwaway key (valid 60s
+    on the box). `aws ec2-instance-connect ssh` can't run a remote command, hence plain ssh + open-tunnel."""
     with tempfile.TemporaryDirectory() as d:
         key = f"{d}/key"
         run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key)
@@ -176,13 +177,31 @@ def ssh(iid: str, remote_cmd: str | None = None, input=None, os_user: str = "adm
         )  # fmt: skip
         # ponytail: host key accepted per connection (tmp known_hosts); the IAM-authenticated
         # tunnel to the instance's private IP is the trust anchor. Pin keys if that ever matters.
-        return run(
-            "ssh", "-i", key, "-o", "IdentitiesOnly=yes", "-o", "ConnectTimeout=15",
+        yield [
+            "-i", key, "-o", "IdentitiesOnly=yes", "-o", "ConnectTimeout=15",
             "-o", f"ProxyCommand=aws --region {REGION} ec2-instance-connect open-tunnel --instance-id %h",
             "-o", "StrictHostKeyChecking=accept-new", "-o", f"UserKnownHostsFile={d}/known_hosts",
-            *(["-t"] if input is None else []), f"{os_user}@{iid}", *([remote_cmd] if remote_cmd else []),
+        ]  # fmt: skip
+
+
+def ssh(iid: str, remote_cmd: str | None = None, input=None, os_user: str = "admin") -> int:
+    """Interactive (with a tty) when input is None; otherwise input is fed to remote_cmd's stdin."""
+    with ssh_opts(iid, os_user) as opts:
+        return run(
+            "ssh", *opts, *(["-t"] if input is None else []),
+            f"{os_user}@{iid}", *([remote_cmd] if remote_cmd else []),
             input=input, check=False, env=aws_env(),
         )  # fmt: skip
+
+
+def scp_paths(paths: list[str], host: str) -> list[str]:
+    """Map `:path` (box side) to `host:path`. Either the destination or every source is on the box."""
+    if len(paths) < 2:
+        die("need at least SRC and DST")
+    remote = [p.startswith(":") for p in paths]
+    if remote[-1] == any(remote[:-1]) or (not remote[-1] and not all(remote[:-1])):
+        die("prefix the box side with ':' (e.g. :/data/shared/x), on DST or on every SRC, not both")
+    return [f"{host}{p}" if r else p for p, r in zip(paths, remote)]
 
 
 def connect(name: str) -> str:
@@ -288,6 +307,14 @@ def cmd_open(a):
     iid = connect(a.name)
     print("First time? Run `claude auth login` (claude.ai login, NOT setup-token).")
     sys.exit(ssh(iid, SESSION_CMD))
+
+
+def cmd_cp(a):
+    """scp -r as ubuntu, so copied files belong to the agent user."""
+    iid = connect(a.name)
+    paths = scp_paths(a.paths, f"ubuntu@{iid}")
+    with ssh_opts(iid, "ubuntu") as opts:
+        sys.exit(run("scp", "-r", *opts, *paths, check=False, env=aws_env()))
 
 
 def cmd_start(a):
@@ -439,6 +466,15 @@ def main():
     add.add_argument("--type", help="instance type (default from tfvars)")
     add.add_argument("--data-gb", type=int, help="data volume size (default from tfvars)")
     cmd("open", cmd_open, "start the box if needed and open a shell as ubuntu (exit -> admin)")
+    cp = cmd(
+        "cp", cmd_cp, "copy files/folders to or from the box as ubuntu (scp -r); ':path' is the box side"
+    )
+    cp.add_argument(
+        "paths",
+        nargs="+",
+        metavar="PATH",
+        help="SRC... DST, e.g. ./data :/data/shared/  or  :/data/shared/out .",
+    )
     cmd("start", cmd_start, "start the box")
     cmd("stop", cmd_stop, "stop the box")
     cmd("status", cmd_status, "show the box state")
